@@ -1,18 +1,22 @@
-import { getPrisma } from "@/lib/db/client";
-import type { PrismaClient } from "@/lib/db/generated/client";
+import {
+  pingDatabase,
+  prismaConfigurationStore,
+} from "@/lib/db/prismaConfigurationStore";
+import type { ConfigurationStore } from "@/lib/db/configurationStore";
 
 /**
- * What every resolver is given. A resolver reaches the database only here.
+ * What every resolver is given. A resolver reaches storage only through this.
  *
- * `db` is a function rather than a property on purpose: Yoga assembles the
- * final context by copying this object, which would evaluate a getter — and
- * with it the connection string lookup — on every request, including requests
- * that never touch the database.
+ * Both fields are functions rather than values: Yoga assembles its final
+ * context by copying this object, and copying a getter evaluates it, which
+ * would open a database connection — and require a connection string — on
+ * every request including the ones that never touch a table.
  */
 export type GraphQLContext = {
-  readonly db: () => PrismaClient;
+  readonly store: () => ConfigurationStore;
+  readonly pingDatabase: () => Promise<boolean>;
 };
 
 export function createContext(): GraphQLContext {
-  return { db: getPrisma };
+  return { store: prismaConfigurationStore, pingDatabase };
 }

@@ -20,7 +20,7 @@ test("the GraphQL endpoint answers the health query", async ({ request }) => {
   expect(response.status()).toBe(200);
   const body: unknown = await response.json();
   expect(body).toMatchObject({
-    data: { health: { ok: true, schemaVersion: "1" } },
+    data: { health: { ok: true, schemaVersion: "2" } },
   });
 });
 
