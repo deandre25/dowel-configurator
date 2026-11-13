@@ -23,6 +23,7 @@ import {
 
 export const RULE_CODES = [
   "DIMENSIONS_OUT_OF_RANGE",
+  "TOO_MANY_MODULES",
   "EMPTY_UNIT",
   "OUT_OF_BOUNDS",
   "DRAWER_IN_TOP_ROW",
@@ -46,6 +47,14 @@ export type Violation = {
 export type ValidationResult =
   | { readonly valid: true }
   | { readonly valid: false; readonly violations: readonly Violation[] };
+
+/**
+ * The most modules any legal unit can hold: one per bay of the largest grid.
+ * An input carrying more than this is rejected before anything iterates over
+ * it, which keeps a hostile request from costing work proportional to whatever
+ * it chose to send.
+ */
+export const MAX_MODULES = LIMITS.maxWidth * LIMITS.maxHeight;
 
 function topRow(configuration: Configuration): number {
   return configuration.height - 1;
@@ -203,6 +212,20 @@ export function validateConfiguration(
   const dimensions = dimensionViolations(configuration);
   if (dimensions.length > 0) {
     return { valid: false, violations: dimensions };
+  }
+
+  if (configuration.modules.length > MAX_MODULES) {
+    return {
+      valid: false,
+      violations: [
+        {
+          code: "TOO_MANY_MODULES",
+          message: `A unit holds at most ${MAX_MODULES} modules, one for each bay of the largest size.`,
+          cells: [],
+          moduleIndex: null,
+        },
+      ],
+    };
   }
 
   const violations: Violation[] = [];
