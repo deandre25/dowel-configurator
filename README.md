@@ -112,6 +112,38 @@ produced it.
 | Frame rate, phone viewport at dpr 3, 4× CPU slowdown | 60.0 fps, 0 dropped frames | as above; the throttle verified at a measured 4.13× on a fixed workload | 2026-11-13 |
 | The scene's own work per frame, throttled | 0.1 ms median, 0.9 ms worst | as above — the figure a display cap cannot hide | 2026-11-13 |
 
+### What these numbers do not say
+
+The GPU is doing forty times the work the CPU is, and it scales with pixels. A
+4× CPU slowdown therefore does not simulate a weak GPU — the expense on a phone
+is fill rate, the filtered environment map and the variance shadow map, and a
+CPU throttle touches none of them. "60 fps under 4× on an M1" says nothing
+about a mid-range Android, where the same 1.67 ms could be 8–17 ms.
+
+Every figure above comes from one machine, an Apple M1. Numbers from real
+devices belong here and outrank them.
+
+## The scene
+
+![The largest unit, six columns by five rows, in charcoal](docs/screenshots/maximum.png)
+
+Every panel is generated from the configuration. There is no model of a shelf
+in this repository, because a model cannot change its own dimensions.
+
+- **One `InstancedMesh` per part type**, allocated once and never reallocated.
+  Changing the configuration writes instance matrices; it does not touch the
+  scene graph. Draw calls follow the number of part *types* in use, not the
+  number of parts — which is why the largest unit draws in fewer calls than the
+  one with doors.
+- **Lit by an environment map**, not by a pile of lights, with ACES filmic tone
+  mapping, plus one directional light whose job is the shadow on the floor.
+- **Occlusion is computed from the geometry** rather than from the depth
+  buffer: a bay is a box open towards the viewer, so depth into the unit is
+  how dark a fragment is. Two `smoothstep`s, no post-processing pass.
+- **The camera is constrained**: it cannot go under the floor, cannot look
+  straight down, and cannot swing behind the unit.
+- **Nothing moves unless you move it.**
+
 ## Decisions
 
 `DECISIONS.md` carries one entry per non-obvious choice, dated.
