@@ -763,3 +763,96 @@ Continuing the standing practice. Each new gate broken once, with what it said.
 | Playwright, scene route | the canvas's text alternative replaced with "3D view" | exit 1 |
 | `measure-scene.ts` | pointed at a route that draws no canvas | threw on the wait for a first frame rather than reporting numbers |
 | First-load JS budget | — | re-run after the 3D work: 132.7 KB, nothing 3D in the landing route |
+
+## 2026-11-13 — The sixth lesson, and it is not an instrument fault
+
+The first five were wrong instruments: a HEAD request that skipped gzip, a
+manifest missing a chunk, a mock raising the exception it was told to, two
+module instances, a frame rate measured on SwiftShader. This one is different,
+and it is worth separating because the fix is not better tooling.
+
+> **An object that does not change the number of draws is not being drawn.**
+
+The draw-call counter was correct, was being read correctly, and was printed on
+every line of every run. Adding a shadow plane to the scene left it at 4. I
+read past that twice — once for drei's `ContactShadows` and once for the
+version written here — and spent both attempts theorising about cameras,
+blending and transparency instead.
+
+There is no process fix for this. The number was there. The habit it argues
+for is to predict what a measurement should do *before* making a change, and
+to treat an unchanged number as a result rather than as background.
+
+## 2026-11-13 — The frustum-culling hypothesis, tested and rejected
+
+A good hypothesis for the `ContactShadows` failure: `InstancedMesh` leaves
+`boundingSphere` null, so culling falls back to the base geometry's sphere —
+one unit cube at the origin, not the whole set — and a camera under the floor
+with a tight frustum could cull it.
+
+It is not the cause. Tested by disabling culling on the diagnostic box as well
+and computing bounding spheres on the instanced meshes after writing their
+matrices: `ContactShadows` still rendered nothing, for either. The instanced
+meshes had carried `frustumCulled = false` since the first version in any case.
+
+The entry above stands as unresolved, the shipped shadow stays, and there is
+no fourth attempt. Recording a rejected hypothesis is worth the lines: it is
+one fewer thing for the next person to try.
+
+## 2026-11-13 — The frame figure measured the wrong half of the pipeline
+
+`performance.now()` around the scene's per-frame work times **the CPU issuing
+draw commands**, not the GPU executing them. For eighteen draw calls, 0.1 ms is
+submission cost. Reporting it as "the scene's own work per frame" implied a
+completeness it did not have.
+
+`EXT_disjoint_timer_query_webgl2` gives the other half. With both:
+
+| Profile | CPU per frame | GPU per frame |
+| --- | --- | --- |
+| Desktop retina, 4.4 Mpx | 0.10 ms median | **4.06 ms** median, 5.9 ms worst |
+| Phone viewport, 2.96 Mpx, 4× CPU | 0.00 ms median | **1.67 ms** median, 1.9 ms worst |
+
+The GPU is doing forty times the work the CPU is, and it scales with pixels,
+not with instructions. Against a 16.7 ms budget, 4 ms is a quarter of the frame
+on an M1.
+
+**So a 4× CPU slowdown does not simulate a weak GPU, and never did.** The
+expense on a phone will be fill rate at dpr 3, the filtered environment map and
+the variance shadow map — none of which a CPU throttle touches. The honest
+reading of "60 fps under 4× on an M1" is that it says nothing about a
+mid-range Android. The M1's 1.67 ms at phone resolution, on a GPU perhaps five
+to ten times faster per pixel, is 8–17 ms there: at or past the budget.
+
+**This is measured on one machine and it needs a real device.** The site
+deploys at Phase 4; the figures from an actual phone go in the README, with the
+device named, and they outrank everything in this table.
+
+### Finding it took a type error TypeScript could not see
+
+The GPU timer reported "unavailable" while a probe in the same page obtained
+the extension from the same canvas. The cause was neither: `Stage` never
+declared `onGpuSamples`, so it dropped the callback on the way to `Unit`, and
+the timer never started. The prop was passed through a spread —
+`{...(measuring ? { onFrame, onGpuSamples } : {})}` — and a spread is not
+subject to excess-property checking, so the compiler had nothing to say. Two
+conditional spreads in a row, each individually reasonable, and a silently
+discarded prop between them.
+
+## 2026-11-13 — Occlusion computed from the geometry, not from the depth buffer
+
+The scene was flat because a soft environment lights every face of every box
+identically, and the thing it cannot know is that a bay is a box open towards
+the viewer.
+
+That is known here, though, so the occlusion is a function of position rather
+than a screen-space pass: fragments deeper into the unit are darker, and the
+floor takes light from the bottom of the unit. Two `smoothstep`s and a multiply
+injected into the material's shader with `onBeforeCompile`.
+
+**It costs nothing measurable.** GPU time per frame went from 4.07 ms to
+4.06 ms — inside the noise. SSAO would have been a depth pre-pass, a blur and a
+composite for an effect this gets most of, and judging it by frame rate would
+have shown nothing either way because the frame rate is capped.
+
+The pulls are left out: they stand proud of the unit and are not in a bay.

@@ -19,13 +19,23 @@ export type MeasurementApi = {
   /** `performance.now()` of each rendered frame, most recent last. */
   frames: number[];
   /**
-   * Milliseconds the scene itself spent preparing each of those frames.
+   * Milliseconds of **CPU** the scene spent preparing each of those frames:
+   * easing the transition and writing instance matrices.
    *
-   * This is the figure that survives a capped display: frames per second tells
-   * you what the browser handed out, while this tells you what the scene cost,
-   * and only the second one is a property of the code.
+   * It is not the cost of the frame. It is the cost of issuing it. The GPU's
+   * share is in `gpuMs`, and on a phone that is the half that matters.
    */
   frameWork: number[];
+
+  /**
+   * Milliseconds of **GPU** time per frame, from
+   * `EXT_disjoint_timer_query_webgl2`, where the browser exposes it.
+   *
+   * Empty with `gpuTimerAvailable: false` means the extension was not
+   * available, not that the GPU did no work.
+   */
+  gpuMs: number[];
+  gpuTimerAvailable: boolean;
   /** Resizes the unit, so a transition can be measured before controls exist. */
   setSize: (columns: number, rows: number) => void;
   /** Unmounts and remounts the canvas, for the disposal check. */
@@ -46,13 +56,18 @@ export function measurementRequested(): boolean {
 }
 
 export function installMeasurement(
-  api: Omit<MeasurementApi, "stats" | "frames" | "frameWork" | "ready">,
+  api: Omit<
+    MeasurementApi,
+    "stats" | "frames" | "frameWork" | "gpuMs" | "gpuTimerAvailable" | "ready"
+  >,
 ): MeasurementApi {
   const existing = globalThis.__dowelMeasurement;
   const installed: MeasurementApi = {
     stats: existing?.stats ?? null,
     frames: existing?.frames ?? [],
     frameWork: existing?.frameWork ?? [],
+    gpuMs: existing?.gpuMs ?? [],
+    gpuTimerAvailable: existing?.gpuTimerAvailable ?? false,
     ready: existing?.ready ?? false,
     ...api,
   };
@@ -73,6 +88,18 @@ export function recordFrame(
   if (api.frames.length > 1_000) {
     api.frames.splice(0, api.frames.length - 1_000);
     api.frameWork.splice(0, api.frameWork.length - 1_000);
+  }
+}
+
+export function recordGpuSamples(
+  api: MeasurementApi,
+  samples: readonly number[],
+  available: boolean,
+): void {
+  api.gpuTimerAvailable = available;
+  api.gpuMs.push(...samples);
+  if (api.gpuMs.length > 1_000) {
+    api.gpuMs.splice(0, api.gpuMs.length - 1_000);
   }
 }
 
