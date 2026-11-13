@@ -7,9 +7,9 @@ update, and shares the result as a link that restores the exact build.
 Dowel is a fictional company. This is a demonstration project and nothing here
 is for sale.
 
-> Phase 1 of five. The foundation is in place; the domain, the scene and the
-> configurator follow. This file is finished in Phase 5 with the live link, the
-> schema, and the measured numbers.
+> Phase 2 of five. The domain and the API are done and tested; the scene and
+> the configurator follow. This file is finished in Phase 5 with the live link,
+> the schema, and the measured numbers.
 
 ## What is server-authoritative
 
@@ -18,6 +18,24 @@ legal. It sends a configuration; the server validates it against the
 compatibility rules and returns the price. The rules live in one module, the
 resolver imports it, and the resolver's answer is the only one that counts — a
 mutation carrying an impossible configuration is rejected there, not in the UI.
+
+## The product
+
+A unit is a grid: 2 to 6 columns, 2 to 5 rows, in oak, charcoal or white. Every
+bay holds one module or is left open.
+
+| Module | Occupies | Rule |
+| --- | --- | --- |
+| Open shelf | 1 bay | — |
+| Drawer | 1 bay | not in the top row |
+| Door | 2 bays, vertically | cannot start in the top row |
+
+A unit over 4 columns wide keeps the centre bay of its bottom row for a centre
+support. A unit may not be entirely empty.
+
+Coordinates count from the bottom left, so row 0 stands on the floor. Prices
+are integer pence and finish multipliers are basis points, applied once to the
+subtotal, so the whole calculation has one rounding step.
 
 ## Stack
 
@@ -54,8 +72,8 @@ The GraphQL endpoint is at `/api/graphql`.
 | --- | --- |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run codegen` | Regenerates `lib/graphql/generated` from the SDL |
-| `npm run codegen:check` | Regenerates, then fails if the result differs from what is committed |
-| `npm test` | Vitest |
+| `npm run codegen:check` | Regenerates into a temporary copy and fails if the committed types differ. Asks no questions of git, so an uncommitted-but-correct file is not reported as stale |
+| `npm test` | Vitest: the rules, the pricing table, the id encoding, and the resolvers through the real schema |
 | `npm run test:e2e` | Playwright against a local production build |
 | `npm run measure:bundle` | Starts `next start`, loads the landing route in headless Chromium, and sums the gzipped bodies of every script it fetched. Fails over 150 KB. |
 
