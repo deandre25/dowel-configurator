@@ -30,9 +30,6 @@ export type Query = {
   health: Health;
 };
 
-export type WithIndex<TObject> = TObject & Record<string, any>;
-export type ResolversObject<TObject> = WithIndex<TObject>;
-
 export type ResolverTypeWrapper<T> = Promise<T> | T;
 
 export type ResolverWithResolve<TResult, TParent, TContext, TArgs> = {
@@ -151,40 +148,40 @@ export type DirectiveResolverFn<
 ) => TResult | Promise<TResult>;
 
 /** Mapping between all available schema types and the resolvers types */
-export type ResolversTypes = ResolversObject<{
+export type ResolversTypes = {
   Boolean: ResolverTypeWrapper<Scalars["Boolean"]["output"]>;
   Health: ResolverTypeWrapper<Health>;
   Query: ResolverTypeWrapper<Record<PropertyKey, never>>;
   String: ResolverTypeWrapper<Scalars["String"]["output"]>;
-}>;
+};
 
 /** Mapping between all available schema types and the resolvers parents */
-export type ResolversParentTypes = ResolversObject<{
+export type ResolversParentTypes = {
   Boolean: Scalars["Boolean"]["output"];
   Health: Health;
   Query: Record<PropertyKey, never>;
   String: Scalars["String"]["output"];
-}>;
+};
 
 export type HealthResolvers<
   ContextType = GraphQLContext,
   ParentType extends ResolversParentTypes["Health"] =
     ResolversParentTypes["Health"],
-> = ResolversObject<{
+> = {
   database?: Resolver<ResolversTypes["Boolean"], ParentType, ContextType>;
   ok?: Resolver<ResolversTypes["Boolean"], ParentType, ContextType>;
   schemaVersion?: Resolver<ResolversTypes["String"], ParentType, ContextType>;
-}>;
+};
 
 export type QueryResolvers<
   ContextType = GraphQLContext,
   ParentType extends ResolversParentTypes["Query"] =
     ResolversParentTypes["Query"],
-> = ResolversObject<{
+> = {
   health?: Resolver<ResolversTypes["Health"], ParentType, ContextType>;
-}>;
+};
 
-export type Resolvers<ContextType = GraphQLContext> = ResolversObject<{
+export type Resolvers<ContextType = GraphQLContext> = {
   Health?: HealthResolvers<ContextType>;
   Query?: QueryResolvers<ContextType>;
-}>;
+};
