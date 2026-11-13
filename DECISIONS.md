@@ -404,3 +404,178 @@ Two things worth keeping from it:
   start`, returns `UNREADABLE_CONFIGURATION` with its code intact — Turbopack
   bundles one copy. Had I trusted the test, I would have "fixed" a working error
   path; had I trusted the fix, I would not have known production was fine.
+
+## 2026-11-13 — The error strategy, stated as a rule
+
+The rule, in one line: **a failure the visitor can resolve by changing their
+configuration is data; absence is null; anything else is a GraphQL error.**
+
+In full:
+
+1. **Expected failure is data, through a union.** A rule the visitor broke
+   comes back as `InvalidConfiguration` in `data`, with the rule code, a
+   message written for a person, the cells at fault and the index of the
+   module responsible. The response is a success; the answer is "no, and here
+   is why".
+2. **Absence is null.** A share id that does not exist, and a share id that is
+   not well formed, both answer `null`. They are deliberately not
+   distinguished — see below.
+3. **Everything else is a GraphQL error**, with a `code` in `extensions`. These
+   are conditions the visitor cannot fix: a stored row this build cannot read
+   or cannot trust, a share id that could not be allocated, a store that has
+   reached its ceiling.
+4. **Nothing is masked that the visitor could act on**, and nothing is exposed
+   that is only meaningful to the server. Yoga masks unexpected throws to
+   `INTERNAL_SERVER_ERROR`; every error this project raises deliberately is a
+   `GraphQLError` with its own code, so masking never swallows a real answer.
+
+### Every field, audited against the rule
+
+| Field | Expected failure | Absence | Server fault |
+| --- | --- | --- | --- |
+| `Query.catalogue` | — static data, cannot fail | — | — |
+| `Query.configuration(id)` | — | `null` for unknown **and** malformed ids | `UNREADABLE_CONFIGURATION`, `STORED_CONFIGURATION_INVALID` |
+| `Query.health` | — | — | none: a database it cannot reach is `database: false`, which is this field's whole job |
+| `Mutation.priceConfiguration` | `InvalidConfiguration` | — | — pure computation, nothing to fail |
+| `Mutation.saveConfiguration` | `InvalidConfiguration` | — | `SAVE_LIMIT_REACHED`, `ID_ALLOCATION_FAILED` |
+
+Below the schema, at the transport: a malformed body is `BAD_REQUEST` with
+status 400, a body over 64 KB is `REQUEST_ENTITY_TOO_LARGE` with 413, and a
+query that does not match the schema is `GRAPHQL_VALIDATION_FAILED`. All three
+verified by hand against a built server.
+
+### Two places the rule is applied in a way worth defending
+
+**A malformed share id answers null, not an error.** It is arguably something
+the visitor can act on — their link is wrong. It is still absence: the answer
+to "is there a build at this address" is no, and the shape of the address does
+not change that. It also means the endpoint cannot be used to find out which
+strings are valid ids, and a malformed id never becomes a database query.
+
+**`SAVE_LIMIT_REACHED` is an error, not a union member**, even though it is
+entirely expected. The test is not "did we foresee it" but "can the visitor
+resolve it by changing their configuration" — and they cannot. Were it a union
+member, every client would have to render a case it can do nothing about.
+
+## 2026-11-13 — saveConfiguration is content-addressed, and bounded
+
+`saveConfiguration` is a public write with no account behind it, against a
+0.5 GB free tier. Three things bound it, smallest first:
+
+1. **A 64 KB request body limit.** Yoga's default is 25 MB. The largest legal
+   request here — a 30-module configuration plus the query text — is a few
+   kilobytes, so anything over 64 KB is not a configuration. Refused with 413
+   before it is parsed. Verified: a 168 KB body returns
+   `REQUEST_ENTITY_TOO_LARGE`.
+2. **A module ceiling**, `TOO_MANY_MODULES`, at one module per bay of the
+   largest grid, which is 30. Checked before anything iterates the input, so a
+   hostile request cannot cost work proportional to what it chose to send. A
+   100,000-module input produces one violation rather than 100,000.
+3. **A content hash, unique.** The configuration's canonical form — dimensions,
+   finish, modules sorted — is hashed with SHA-256, and that hash is a unique
+   index. Saving a build that already exists returns the row that is there.
+
+The hash is the one that matters. It makes a save idempotent, so a script
+repeating a request writes nothing, and it bounds the table to **distinct**
+configurations rather than to requests. It is also simply the better behaviour:
+the same build always has the same link, including when two people assemble it
+in a different order.
+
+On top of those there is **an absolute ceiling of 50,000 stored
+configurations**, checked only on the path that writes a new row — so saving an
+existing build keeps working after the ceiling is reached. A row is a few
+hundred bytes, so the ceiling is a few tens of megabytes: well inside the tier,
+and far more builds than this will ever hold. It costs one `count()` per new
+row.
+
+**What this deliberately is not.** There is no rate limit. A per-instance
+counter is meaningless in serverless — each function instance would hold its
+own — and a shared counter means a write to Postgres per request, which is a
+larger surface than the one it protects. What a rate limit would buy here is
+already bought by idempotency and the row ceiling: the cost of abuse is bounded
+absolutely rather than per unit time. If this project ever needed real rate
+limiting, it would belong at the edge, not in the resolver.
+
+## 2026-11-13 — Prisma 7 with the pg adapter does not report `meta.target`
+
+Asked whether `saveConfiguration` retries on a unique-constraint collision, the
+answer was yes — five attempts, then a typed `ID_ALLOCATION_FAILED`, with tests
+on both paths. Checking it properly turned up something the tests could not see.
+
+The table now has two unique keys, and they mean opposite things: a duplicate
+share id should be retried with a new id, a duplicate content hash means the
+build is already saved and its row is the answer. The code distinguished them
+by reading Prisma's documented `meta.target`.
+
+**Prisma 7 with the `@prisma/adapter-pg` driver adapter does not set
+`meta.target` at all.** Forcing both violations against the real database shows
+the constraint arrives as:
+
+```
+meta.driverAdapterError.cause.constraint.index = "Configuration_pkey"
+meta.driverAdapterError.cause.constraint.index = "Configuration_hash_key"
+```
+
+So every collision was classified as a hash collision, and the id-retry path —
+which has a passing test, against an in-memory store that raises the exception
+the test expects — was dead. It would have worked for as long as 40 bits of
+randomness held out, and then failed once, confusingly.
+
+`lib/db/uniqueViolation.ts` now reads the adapter's constraint name, still
+reads `meta.target` for the engine path and other adapters, and **returns null
+rather than guessing** for a constraint it cannot attribute; the store then
+raises with the metadata it was given. `uniqueViolation.test.ts` asserts both
+real shapes, captured from the probe rather than invented. Re-verified against
+Postgres afterwards: duplicate id classifies as `id`, duplicate hash as `hash`.
+
+The lesson is the same as the previous one, one layer down: a mock raises the
+exception you told it to raise. It cannot tell you that the real thing raises
+something else.
+
+## 2026-11-13 — "One version installed is not one module instance"
+
+Worth stating on its own, because it is the sentence that would have saved the
+time:
+
+> **One version installed is not one module instance.**
+
+A library can be present exactly once in `node_modules` and still be loaded
+twice, because package `exports` maps pick a different build per condition —
+and `instanceof` across those two builds is false. Where a library uses
+`instanceof` to make a decision, as Yoga does to decide whether to mask an
+error, that decision silently inverts.
+
+And the resolution, which is the half that matters:
+
+> **Verify against a real build before you touch working code.**
+
+The test was wrong, not the resolver. The only reason that was knowable was
+planting a row in Postgres and querying it through `next build && next start`
+before changing anything. Had the fix come first, a working error path would
+have been "fixed" to match a broken test.
+
+## 2026-11-13 — A check never seen to fail is not known to work
+
+Standing practice, not an incident: **when a gate is added, break the thing it
+guards once and confirm it notices.** Recorded here with the observed result,
+and extended whenever a gate is added.
+
+| Gate | Broken by | Result |
+| --- | --- | --- |
+| `tsc --noEmit` | a number assigned to a `string` in `pricing.ts` | exit 2, `error TS2322` naming the line |
+| ESLint | a file using `any` and `console.log` | exit 1, 2 errors (`no-explicit-any`, `no-console`) |
+| Vitest | rule 1 disabled, so a drawer may sit in the top row | exit 1, 8 tests failed of 115 |
+| Generated types | a hand edit to the committed types | exit 1, "differs from a fresh generation" |
+| First-load JS budget | the budget lowered to 1 KB | exit 1, "Budget breached: 132.3 KB > 1 KB" |
+| Playwright | the landing heading reworded | exit 1, `toBeVisible()` failed |
+| Prisma unique-violation classifier | both constraints forced against real Postgres | correct classification, after the probe showed the first implementation was wrong |
+
+Breaking the budget gate also exposed a flaw in the gate's own harness:
+`npm run measure:bundle -- --budget-kb 1` was ignored, because the script read
+the first `--budget-kb` on the command line and the npm script already supplies
+one. It now reads the last, so an override works. A gate you cannot aim is a
+gate you cannot test.
+
+Still unverified, and listed so it is not forgotten: the deployed check, which
+does not exist until Phase 5. It will be broken once against a deliberately
+wrong URL before it is trusted.

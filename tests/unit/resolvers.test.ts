@@ -9,9 +9,10 @@
  * production.
  */
 import { beforeEach, describe, expect, it } from "vitest";
+import { hashConfiguration } from "@/lib/domain/canonical";
 import { LIMITS } from "@/lib/domain/catalogue";
 import { centreSupportColumn } from "@/lib/domain/grid";
-import { RULE_CODES, type RuleCode } from "@/lib/domain/rules";
+import { MAX_MODULES, RULE_CODES, type RuleCode } from "@/lib/domain/rules";
 import { newShareId } from "@/lib/domain/shareId";
 import type { GraphQLContext } from "@/lib/graphql/context";
 import { GRAPHQL_ENDPOINT, createYogaServer } from "@/lib/graphql/yoga";
@@ -303,6 +304,14 @@ describe("Mutation.priceConfiguration", () => {
   it("rejects each rule with its own code, and says which cell", async () => {
     const samples: Readonly<Record<RuleCode, Input>> = {
       DIMENSIONS_OUT_OF_RANGE: { ...VALID, width: 7 },
+      TOO_MANY_MODULES: {
+        ...VALID,
+        modules: Array.from({ length: MAX_MODULES + 1 }, () => ({
+          type: "SHELF",
+          column: 0,
+          row: 0,
+        })),
+      },
       EMPTY_UNIT: { ...VALID, modules: [] },
       OUT_OF_BOUNDS: {
         ...VALID,
@@ -340,7 +349,11 @@ describe("Mutation.priceConfiguration", () => {
       const violation = result.violations.find((v) => v.code === code);
       expect(violation, `expected a ${code} violation`).toBeDefined();
       expect(violation?.message.length).toBeGreaterThan(20);
-      if (code !== "EMPTY_UNIT" && code !== "DIMENSIONS_OUT_OF_RANGE") {
+      const aboutTheWholeUnit =
+        code === "EMPTY_UNIT" ||
+        code === "DIMENSIONS_OUT_OF_RANGE" ||
+        code === "TOO_MANY_MODULES";
+      if (!aboutTheWholeUnit) {
         expect(violation?.cells.length, code).toBeGreaterThan(0);
       }
     }
@@ -420,6 +433,85 @@ describe("Mutation.saveConfiguration and Query.configuration", () => {
     expect(queried).toBe(false);
   });
 
+  it("returns the existing link when the same build is saved again", async () => {
+    const first = dataOf(await run(SAVE_MUTATION, { input: VALID }));
+    const second = dataOf(await run(SAVE_MUTATION, { input: VALID }));
+    const a = first["saveConfiguration"] as { id: string };
+    const b = second["saveConfiguration"] as { id: string };
+    expect(b.id).toBe(a.id);
+    expect(store.rows.size).toBe(1);
+  });
+
+  it("recognises the same build assembled in a different order", async () => {
+    const first = dataOf(await run(SAVE_MUTATION, { input: VALID }));
+    const reordered = { ...VALID, modules: [...VALID.modules].reverse() };
+    const second = dataOf(await run(SAVE_MUTATION, { input: reordered }));
+    expect((second["saveConfiguration"] as { id: string }).id).toBe(
+      (first["saveConfiguration"] as { id: string }).id,
+    );
+    expect(store.rows.size).toBe(1);
+  });
+
+  it("writes a second row for a build that differs only in finish", async () => {
+    dataOf(await run(SAVE_MUTATION, { input: VALID }));
+    dataOf(await run(SAVE_MUTATION, { input: { ...VALID, finish: "OAK" } }));
+    expect(store.rows.size).toBe(2);
+  });
+
+  it("stores the hash of the configuration it saved", async () => {
+    const saved = dataOf(await run(SAVE_MUTATION, { input: VALID }));
+    const { id } = saved["saveConfiguration"] as { id: string };
+    const expected = await hashConfiguration({
+      width: VALID.width,
+      height: VALID.height,
+      finish: VALID.finish,
+      modules: VALID.modules.map((m) => ({
+        type: m.type as "SHELF" | "DRAWER" | "DOOR",
+        column: m.column,
+        row: m.row,
+      })),
+    });
+    expect(store.rows.get(id)?.hash).toBe(expected);
+  });
+
+  it("answers with the existing row when another request saved the build first", async () => {
+    // The lookup misses, then the write loses the race. The row that won is
+    // the answer, not an error.
+    const first = dataOf(await run(SAVE_MUTATION, { input: VALID }));
+    const { id } = first["saveConfiguration"] as { id: string };
+    const row = store.rows.get(id);
+    expect(row).toBeDefined();
+
+    store = memoryConfigurationStore();
+    store.rejectNextHash();
+    if (row !== undefined) {
+      store.seed(row);
+    }
+    // Seeded after the rejection is armed, so findByHash finds it on the retry.
+    const second = dataOf(await run(SAVE_MUTATION, { input: VALID }));
+    expect((second["saveConfiguration"] as { id: string }).id).toBe(id);
+  });
+
+  it("refuses a new configuration once the store is full, and says so", async () => {
+    store.pretendCount(50_000);
+    const result = await run(SAVE_MUTATION, { input: VALID });
+    expect(result.errors?.[0]?.extensions?.["code"]).toBe("SAVE_LIMIT_REACHED");
+    expect(store.rows.size).toBe(0);
+  });
+
+  it("still returns the link for a build that already exists when the store is full", async () => {
+    dataOf(await run(SAVE_MUTATION, { input: VALID }));
+    const { id } = (
+      dataOf(await run(SAVE_MUTATION, { input: VALID })) as {
+        saveConfiguration: { id: string };
+      }
+    ).saveConfiguration;
+
+    store.pretendCount(50_000);
+    const again = dataOf(await run(SAVE_MUTATION, { input: VALID }));
+    expect((again["saveConfiguration"] as { id: string }).id).toBe(id);
+  });
+
   it("retries when a generated id is already taken", async () => {
     store.rejectNextIds(3);
     const data = dataOf(await run(SAVE_MUTATION, { input: VALID }));
@@ -444,6 +536,7 @@ describe("a stored row this build cannot trust", () => {
     const id = newShareId();
     store.seed({
       id,
+      hash: "0".repeat(64),
       width: 3,
       height: 3,
       finish: "OAK",
@@ -461,6 +554,7 @@ describe("a stored row this build cannot trust", () => {
     const id = newShareId();
     store.seed({
       id,
+      hash: "1".repeat(64),
       width: 3,
       height: 3,
       finish: "OAK",
@@ -496,7 +590,7 @@ describe("Query.health", () => {
     expect(data["health"]).toEqual({
       ok: true,
       database: false,
-      schemaVersion: "2",
+      schemaVersion: "3",
     });
   });
 });

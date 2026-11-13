@@ -7,8 +7,9 @@
  * gets the same answer.
  */
 import { GraphQLError } from "graphql";
-import { IdAlreadyTaken } from "@/lib/db/configurationStore";
+import { HashAlreadyTaken, IdAlreadyTaken } from "@/lib/db/configurationStore";
 import type { StoredConfiguration } from "@/lib/db/configurationStore";
+import { hashConfiguration } from "@/lib/domain/canonical";
 import type { Configuration as DomainConfiguration } from "@/lib/domain/grid";
 import { priceConfiguration } from "@/lib/domain/pricing";
 import { validateConfiguration } from "@/lib/domain/rules";
@@ -27,8 +28,23 @@ import {
 } from "@/lib/graphql/present";
 import { SCHEMA_VERSION } from "@/lib/graphql/version";
 
-/** How many times a save retries when a random id is already taken. */
+/** How many times a save retries when a random share id is already taken. */
 const ID_ATTEMPTS = 5;
+
+/**
+ * An absolute ceiling on stored configurations.
+ *
+ * `saveConfiguration` is a public write with no account behind it, against a
+ * 0.5 GB database. The content hash already means a repeated request writes
+ * nothing, so this bounds the one case the hash does not: a script that walks
+ * distinct configurations. A row is a few hundred bytes, so 50,000 of them is
+ * a few tens of megabytes — well inside the tier, and far more builds than a
+ * portfolio piece will ever hold.
+ *
+ * It is checked only on the path that would write a new row, so saving a build
+ * that already exists keeps working after the ceiling is reached.
+ */
+const MAX_SAVED_CONFIGURATIONS = 50_000;
 
 function fromInput(input: ConfigurationInput): DomainConfiguration {
   return {
@@ -124,10 +140,28 @@ export const resolvers: Resolvers = {
       }
 
       const store = context.store();
+      const hash = await hashConfiguration(configuration);
+
+      // The same build always yields the same link. This is the better
+      // behaviour on its own terms, and it is also what keeps a public write
+      // from filling the database with repeats.
+      const existing = await store.findByHash(hash);
+      if (existing !== null) {
+        return toSavedConfiguration(existing);
+      }
+
+      if ((await store.count()) >= MAX_SAVED_CONFIGURATIONS) {
+        throw new GraphQLError(
+          "This demonstration is not accepting new configurations.",
+          { extensions: { code: "SAVE_LIMIT_REACHED" } },
+        );
+      }
+
       for (let attempt = 1; attempt <= ID_ATTEMPTS; attempt += 1) {
         try {
           const row = await store.create({
             id: newShareId(),
+            hash,
             width: configuration.width,
             height: configuration.height,
             finish: configuration.finish,
@@ -135,6 +169,15 @@ export const resolvers: Resolvers = {
           });
           return toSavedConfiguration(row);
         } catch (error) {
+          if (error instanceof HashAlreadyTaken) {
+            // Another request saved this build between the lookup above and
+            // this write. Its row is the answer.
+            const raced = await store.findByHash(hash);
+            if (raced !== null) {
+              return toSavedConfiguration(raced);
+            }
+            throw error;
+          }
           if (!(error instanceof IdAlreadyTaken)) {
             throw error;
           }

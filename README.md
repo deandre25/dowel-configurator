@@ -7,8 +7,8 @@ update, and shares the result as a link that restores the exact build.
 Dowel is a fictional company. This is a demonstration project and nothing here
 is for sale.
 
-> Phase 2 of five. The domain and the API are done and tested; the scene and
-> the configurator follow. This file is finished in Phase 5 with the live link,
+> Phase 2 of five, plus the gate's follow-ups. The domain and the API are done
+> and tested; the scene and the configurator follow. This file is finished in Phase 5 with the live link,
 > the schema, and the measured numbers.
 
 ## What is server-authoritative
@@ -18,6 +18,19 @@ legal. It sends a configuration; the server validates it against the
 compatibility rules and returns the price. The rules live in one module, the
 resolver imports it, and the resolver's answer is the only one that counts — a
 mutation carrying an impossible configuration is rejected there, not in the UI.
+
+## Two details worth naming
+
+**The canvas's text alternative is generated on the server, from the same
+configuration the geometry is built from.** `Configuration.description` is a
+field of the API, not a string assembled in the component — so the sentence a
+screen reader hears cannot drift from the unit that is drawn. It updates
+because it is part of the same answer as the price.
+
+**No float touches a price.** Money is integer pence and a finish multiplier is
+basis points, where 10000 is ×1, so the arithmetic stays in integers and rounds
+exactly once — at the end, on the only division in the calculation. Nothing in
+the API carries a rounded decimal, and nothing accumulates an error per module.
 
 ## The product
 
@@ -32,6 +45,11 @@ bay holds one module or is left open.
 
 A unit over 4 columns wide keeps the centre bay of its bottom row for a centre
 support. A unit may not be entirely empty.
+
+Saving is content-addressed: the canonical form of a configuration is hashed,
+the hash is unique, and saving a build that already exists returns the link it
+already has. The same build always has the same link, including when two people
+assemble it in a different order.
 
 Coordinates count from the bottom left, so row 0 stands on the floor. Prices
 are integer pence and finish multipliers are basis points, applied once to the

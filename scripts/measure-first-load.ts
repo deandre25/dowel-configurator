@@ -23,7 +23,10 @@ type Measured = {
 };
 
 function argValue(flag: string): string | undefined {
-  const index = process.argv.indexOf(flag);
+  // The last occurrence wins, so `npm run measure:bundle -- --budget-kb 1`
+  // overrides the budget the npm script already passes rather than being
+  // silently ignored.
+  const index = process.argv.lastIndexOf(flag);
   if (index === -1) {
     return undefined;
   }
