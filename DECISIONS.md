@@ -579,3 +579,187 @@ gate you cannot test.
 Still unverified, and listed so it is not forgotten: the deployed check, which
 does not exist until Phase 5. It will be broken once against a deliberately
 wrong URL before it is trusted.
+
+## 2026-11-13 — The unit is a pure function, and the renderer only writes matrices
+
+`assembleUnit(configuration)` returns a flat list of parts, each with a
+position, a size and a **stable key**. It touches no Three.js type, which means
+the design of the product — where every panel goes, how a door covers two bays,
+which bay the support stands in — is tested exhaustively without a GPU. Sixteen
+tests cover it, including one that feeds it a configuration the rules would
+reject.
+
+The renderer's whole job is then to copy those numbers into instance matrices:
+
+- **One geometry per shape.** A 1 × 1 × 1 box and a unit-length rod, shared by
+  every mesh. A part's real size is the scale in its matrix.
+- **One `InstancedMesh` per part type**, allocated once at `PART_CAPACITY` and
+  never reallocated. Changing the configuration writes matrices and sets
+  `count`; it does not add, remove or replace anything in the scene graph.
+- **Draw calls do not grow with the unit.** A 6 × 5 with 29 modules draws in
+  fewer calls than a 5 × 4 with eight, because the count follows the number of
+  part *types* used, not the number of parts.
+
+### The capacity test earned its place
+
+`PART_CAPACITY` was first sized to what a *legal* unit can need: a door covers
+two bays, so at most 15 of them. The capacity test feeds the assembly inputs
+the rules would reject — a door in every bay — and caught that 29 doors would
+overflow a buffer sized for 15, which the renderer would have handled by
+silently drawing the wrong unit. Capacities are now the module ceiling the
+rules enforce, which is 30. Fifteen spare matrices cost nothing; the failure
+they prevent is silent.
+
+## 2026-11-13 — Changing the configuration animates by key, not by rebuild
+
+`PartTransition` tracks parts by the keys the assembly produces. Between one
+configuration and the next, a key in both is the same part and eases to its new
+transform, a key that appears grows in from flat, and a key that goes shrinks
+out and is dropped. Nothing is rebuilt and no object is created or destroyed
+during a change.
+
+Easing is `1 - e^(-rate · dt)`, so the result does not depend on the frame rate
+— a test asserts that stepping at 30 fps and at 144 fps settles to byte-identical
+transforms. `prefers-reduced-motion` switches the whole thing to arriving
+immediately rather than to a faster animation.
+
+One test runs fifty configuration changes one frame apart and asserts the
+tracked set returns to exactly the final assembly, because parts that are never
+dropped are a leak into a buffer with a fixed size.
+
+## 2026-11-13 — The shadow, and three attempts at it
+
+The unit has to stand on something. Getting there took three goes, and the
+third is the one in the repository.
+
+1. **drei's `ContactShadows` rendered nothing.** Not a faint shadow — nothing,
+   at any opacity, blur or distance, on an opaque canvas as well as a
+   transparent one, for a plain box as well as for the instanced meshes.
+2. **The same technique, written here, also rendered nothing.** Rendering the
+   scene from below into a texture with an override material: the floor plane
+   drew (verified by forcing it red), the render target worked (verified by
+   capturing the main camera's view into it, which produced the unit's
+   silhouette), and the orthographic camera under the floor produced an empty
+   texture. **I did not find out why**, and saying so is more useful than a
+   guess: two camera formulations, `lookAt` and an explicit rotation, both
+   produced an empty capture with no error.
+3. **Three's shadow mapping, with one light and a `ShadowMaterial` floor.**
+   This works, responds to the real geometry, and is what ships. The plane is
+   invisible except where the shadow falls on it, so the background still
+   belongs to the page.
+
+Percentage-closer filtering gives a shadow whose edge softness is fixed by the
+kernel; **variance shadow mapping** takes a blur radius, which is what a shadow
+in a room has, so the canvas uses `shadows="variance"` with a radius.
+
+**The directional light is not a retreat to default lighting.** The unit is lit
+by the environment map; the light is at a tenth of the intensity that would
+require, and it is there to cast a shadow. Pulls do not cast: a 12 mm rod
+contributes nothing to a shadow thrown from three metres, and leaving them out
+of the shadow pass is two fewer draws.
+
+**What the draw-call counter was telling me the whole time.** Adding a shadow
+plane left the count unchanged at 4. A new object in the scene that does not
+change the number of draws is not being drawn, and I read past that twice
+before using it.
+
+## 2026-11-13 — Fronts are set back from the frame
+
+A drawer front centred on the frame's front face is exactly coplanar with the
+board behind it, and a depth buffer cannot separate two surfaces at the same
+depth. The first screenshots had horizontal bands flickering across every door.
+Fronts are now inset 2 mm — which is also how an inset front is actually made.
+
+## 2026-11-13 — The camera frames a sphere
+
+Two attempts cropped the base of the unit, which cut off the shadow and made it
+look as though it were floating: first a fixed multiple of the largest
+dimension, then a vertical-extent calculation that forgot the camera's
+elevation. The distance now comes from the unit's bounding sphere and the field
+of view, `radius / sin(fov / 2)`, which fits whatever the viewport's aspect and
+whatever angle the camera is at. A sphere cannot be cropped by an elevation
+angle.
+
+## 2026-11-13 — The environment map is a twelfth of its published size
+
+The 3D view downloaded 2.0 MB, of which the 1k HDRI was 1.58 MB — **four times
+the weight of all the JavaScript**. The map is never seen: it is filtered into
+an irradiance map and a few blurry specular mips, and every surface in the
+product is matte.
+
+`scripts/downsample-hdr.ts` decodes Radiance RLE, averages in linear light, and
+writes 256 × 128. The file goes from 1577 KB to 128 KB, and the payload from
+2.0 MB to 549 KB.
+
+**Checked, not assumed.** The same configuration was rendered with both files
+and the two images compared channel by channel: mean difference **0.036 / 255**,
+maximum **2 / 255**, and not one channel differing by more than that. The
+source and the exact command are in `CREDITS.md` so the reduction can be
+reproduced or reversed.
+
+## 2026-11-13 — Headless Chromium has no GPU, and a frame rate has no meaning without its ceiling
+
+Three instrument faults, all found by distrusting a convenient number.
+
+**Headless rasterises WebGL in software.** The first frame-rate run reported
+9 fps, and a 4× CPU slowdown barely changed it. The renderer string says why:
+headless is `SwiftShader`, headed on this machine is
+`ANGLE Metal Renderer: Apple M1`. A frame rate taken headless is a measurement
+of SwiftShader. The script now runs headed and **prints the renderer behind
+every number it reports**.
+
+**A frame rate without its ceiling is uninterpretable.** The same build
+reported 60 fps and then 30 fps on consecutive runs with no code change,
+because a headed browser window that is not frontmost has its animation frames
+capped. The script now measures the `requestAnimationFrame` ceiling with
+nothing being driven and prints it beside every figure, so "30 fps" can be read
+as "the ceiling was 30" rather than as a property of the scene.
+
+**A throttle that is not verified may not be applied.** 60 fps under a 4× CPU
+slowdown is either headroom or a slowdown that never happened, and the two look
+identical. The script times a fixed JavaScript workload before and after
+applying the throttle and reports the ratio. The first version's workload ran
+in 15 ms and the ratio came back between 2× and 4× on repeated runs — noise
+reported as a measurement. At 60 million iterations it is 57 ms against 237 ms,
+a measured 4.13× for a requested 4×.
+
+**What survives all of this** is the scene's own work per frame, which no
+display cap can hide: 0.1 ms median and under 1 ms worst, even throttled. That
+is a property of the code. The frame rate is a property of the machine.
+
+## 2026-11-13 — The measurement hook, and why it is in the page
+
+`?measure=1` installs `window.__dowelMeasurement`, which exposes the renderer's
+counters, per-frame timings, and two methods — resize the unit, remount the
+canvas. The scripts drive the scene through it.
+
+It is instrumentation, not a control: it is absent unless the page is asked for
+with that parameter, nothing in the interface reads it, and it exists because
+the numbers this project reports have to come from the real renderer, and until
+Phase 4 there are no controls to take them through. It stays afterwards for the
+disposal check, which has to mount and unmount the canvas twenty times.
+
+## 2026-11-13 — `/scene` is scaffolding, and says so
+
+The route renders three named example builds, which are the three cases worth
+looking at and the three the gate asks for. It is a real page with real copy,
+not a dead control, and Phase 4 absorbs it into the configurator. The examples
+live in `lib/scene/examples.ts` and a test asserts each one is legal against
+the rules rather than trusting the author.
+
+The route is a server component: it validates the configuration before drawing
+it, and generates the canvas's text alternative with the same function the API
+uses, so the sentence a screen reader hears cannot describe a different unit
+from the one drawn.
+
+## 2026-11-13 — Gates broken, second round
+
+Continuing the standing practice. Each new gate broken once, with what it said.
+
+| Gate | Broken by | Result |
+| --- | --- | --- |
+| Vitest, scene assembly | the centre support no longer produced | 3 of 16 failed |
+| Vitest, scene transition | parts that leave never dropped | 2 of 10 failed |
+| Playwright, scene route | the canvas's text alternative replaced with "3D view" | exit 1 |
+| `measure-scene.ts` | pointed at a route that draws no canvas | threw on the wait for a first frame rather than reporting numbers |
+| First-load JS budget | — | re-run after the 3D work: 132.7 KB, nothing 3D in the landing route |
