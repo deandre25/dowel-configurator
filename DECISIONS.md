@@ -90,13 +90,16 @@ returning a constant, so the check that will run against the deployed URL can
 tell "the function answered" from "the function can reach Postgres". It
 reports `ok`, `database` and `schemaVersion` separately for that reason.
 
-## 2026-11-13 — urql over Apollo Client
+## 2026-11-13 — urql over Apollo Client — **superseded the same day, see below**
 
 urql's core is roughly 12–15 KB gzipped against Apollo's 40 KB and up, and the
 landing route has a 150 KB first-load budget that is already 132 KB before any
 application code. This surface needs two queries and two mutations with no
 normalised cache and no cross-view entity sharing, so Apollo's cache would be
 weight with nothing to do.
+
+Kept here as the record: the reasoning was right and the conclusion was still
+too generous. See "No GraphQL client library at all".
 
 ## 2026-11-13 — An ESLint advisory left in place
 
@@ -106,57 +109,68 @@ downgrades `eslint-config-next` from 16.4.6 to 15.5.29, which no longer matches
 Next 16. It is a dev-time linter dependency with no production code path, so it
 stays until the upstream chain updates.
 
-## 2026-11-13 — Yoga is handed Node's own Fetch API, not the ponyfill
+## 2026-11-13 — A failing error path hides every fault beneath it
 
-**Symptom.** In CI, every GraphQL request that hit an error returned an empty
-500. The server log said only:
+**The lesson first, because it generalises.** An error path is not diagnostic
+plumbing; it is the only instrument that reports on everything else. When it
+fails, it does not fail visibly — it fails by replacing a specific fault with a
+generic one, and every defect underneath becomes invisible at the same moment.
+So the error path is verified deliberately, by inducing a failure and reading
+what comes back, before trusting any report that says a thing went wrong.
 
-```
-TypeError: inspect is not a function
-    at rD.error (...)
-    at Object.maskError (...)
-```
+Three consequences adopted for the rest of this project:
 
-**Cause.** `@whatwg-node/node-fetch`, which Yoga falls back to when no
-`fetchAPI` is supplied, does `import { inspect } from "node:util"` in its
-`Headers` implementation. Turbopack's server bundle does not provide that
-export, so Yoga's logger threw while reporting the original error and the real
-error was lost behind a broken 500.
+1. A fault is induced on purpose at least once per surface, and the response is
+   read, not assumed. "Errors are handled" is not a claim this project makes
+   without a response body to show.
+2. Nothing that reports an error may itself be able to throw. Logging,
+   serialisation and masking run on the worst input the system has, at the
+   moment it is least able to tolerate a second failure.
+3. A generic error is treated as an instrument failure until proved otherwise.
+   An empty 500 says only that the reporting stopped working; it says nothing
+   about the thing that failed, and reasoning from it is reasoning from
+   nothing.
+
+**What happened here.** Every GraphQL request that hit an error returned an
+empty 500 whose log said only `TypeError: inspect is not a function`, thrown
+inside Yoga's error masking. `@whatwg-node/node-fetch` — the ponyfill Yoga
+falls back to when no `fetchAPI` is supplied — does
+`import { inspect } from "node:util"` in its `Headers` implementation, and
+Turbopack's server bundle does not provide that export. The logger threw while
+reporting the original error, so the original error was destroyed.
+
+The fault underneath was mine and would have taken a minute to find with a
+working error path: the context exposed Prisma through a lazy getter, Yoga
+assembles its final context by copying that object, copying evaluates the
+getter, and the connection-string lookup therefore ran on every request —
+including, in CI, requests where no connection string exists. One ordinary
+mistake, made unreadable by a broken reporter.
 
 **Fix.** `app/api/graphql/route.ts` passes Node 22's own `fetch`, `Request`,
-`Response`, `Headers` and friends as `fetchAPI`, so the ponyfill is never
-loaded.
+`Response` and `Headers` as `fetchAPI`, so the ponyfill never loads. The
+context carries `db: () => PrismaClient`, called only by a resolver that needs
+a connection.
 
-**Verified** against a built server (`next build && next start`): a resolver
-that throws now returns `{"errors":[{"message":"Unexpected error.",
-"extensions":{"code":"INTERNAL_SERVER_ERROR"}}]}`, and an unknown field
-returns `GRAPHQL_VALIDATION_FAILED`. The throwing resolver was a temporary
-probe and is not in the schema.
+**Verified, not assumed.** Against a built server: a deliberately throwing
+resolver returns
+`{"errors":[{"message":"Unexpected error.","extensions":{"code":"INTERNAL_SERVER_ERROR"}}]}`;
+an unknown field returns `GRAPHQL_VALIDATION_FAILED`; a malformed body returns
+`BAD_REQUEST` with status 400. With `.env.local` moved aside, `health` returns
+`{"ok":true,"database":false}` with status 200. The throwing resolver was a
+temporary probe and is not in the schema.
 
-**Gap, stated plainly.** The committed guard
-(`tests/e2e/landing.spec.ts`, malformed JSON body) exercises the error pipeline
-through the built server, but not the *unexpected*-error branch, which is the
-one that broke: inducing it requires a resolver that throws, and a deliberate
-one would be a dead control. Phase 2's integration tests cover the resolver
-behaviour, and this entry records that the bundling branch is covered by
-manual verification until a real failure path exists to assert on.
+**Gap, stated plainly.** The committed guard in `tests/e2e/landing.spec.ts`
+exercises the error pipeline through the built server, but not the
+*unexpected*-error branch, which is the one that broke — inducing it needs a
+resolver that throws, and a permanent one would be a dead control. Phase 2's
+integration tests cover resolver behaviour directly, and Phase 5's deployed
+check will exercise a real failure. Until then this branch rests on the manual
+verification recorded above, and that is the honest status.
 
-## 2026-11-13 — The context exposes `db()`, not a `prisma` property
-
-The first version gave the context a lazy getter so that a request which never
-touches the database would not require `DATABASE_URL`. Yoga assembles its final
-context by copying the object, which evaluates the getter — so the connection
-string was read on every request after all, and in CI, where no connection
-string exists, that threw before the resolver's own error handling could see
-it. The context now carries `db: () => PrismaClient`, which is only called by a
-resolver that actually needs a connection. Verified by running the built server
-with `.env.local` moved aside: `health` returns
-`{"ok":true,"database":false}` with status 200.
-
-## 2026-11-13 — Two defects CI caught that local runs did not
+## 2026-11-13 — Three defects CI caught that local runs did not
 
 Worth recording, because the brief asks for a fifth wrong instrument and these
-are two of its relatives:
+are three of its relatives:
 
 1. **Stale generated types.** `useIndexSignature` was removed from
    `codegen.ts` without regenerating, so the committed types still carried
@@ -172,3 +186,62 @@ are two of its relatives:
    tests failing with "port already used". It now starts the server in its own
    process group and signals the group. Verified by running the measurement
    twice in a row and asserting the port is free after each.
+
+## 2026-11-13 — No GraphQL client library at all
+
+urql with its React bindings is 12–16 KB gzipped, but it reaches the network
+through parsed documents and so brings `graphql` with it — another 40 KB or so.
+Against 17.7 KB of remaining first-load budget, the client breaks the budget
+twice over before a single control exists.
+
+That is the arithmetic, and it only confirms a decision that was already
+available on the merits. A client library earns its weight through a normalised
+cache, entity sharing across views, optimistic updates and subscriptions. This
+application performs three operations — read the catalogue, price a
+configuration, save a configuration — on one view, with no entity shared
+between them and nothing to invalidate. There is no cache to normalise.
+
+So: graphql-codegen produces typed documents and a thin `fetch` wrapper posts
+them to `/api/graphql`. Two details that make this cheaper than it sounds:
+
+- Codegen's `documentMode: "string"` emits `TypedDocumentString` rather than a
+  parsed AST literal. The type safety is identical, the document travels over
+  the wire as written, and no part of the `graphql` package reaches the client.
+  `graphql` stays a server dependency, where Yoga needs it.
+- The wrapper is a function with a typed signature, not an abstraction layer:
+  one `POST`, `content-type: application/json`, and a typed result. Loading
+  state and errors belong to the component that calls it.
+
+This is also the honest answer to a reviewer who asks why there is no client
+library: because this surface does not have the problem a client library
+solves. The project still demonstrates a typed client — generated types, a
+typed document, a typed response — which is what the requirement is actually
+about.
+
+## 2026-11-13 — The landing route is server-only, and everything client travels in one lazy boundary
+
+The brief already requires the 3D chunk to load lazily. The same boundary is
+moved one level up: the landing route renders as server components only, and a
+single dynamic import brings in the configurator UI, the GraphQL wrapper and
+the scene together, on interaction.
+
+Decided now rather than in Phase 4, because it is a decision about page
+composition and retrofitting it means rewriting the page. Two reasons it is
+right beyond the budget:
+
+1. The 132.3 KB already on the landing route is React and the App Router
+   runtime; application code is under 1 KB of it. Every client byte added to
+   that route is spent before the visitor has asked for the configurator.
+2. A visitor who never opens the configurator should pay nothing for it. That
+   is the same argument as lazy-loading the canvas, and there is no reason the
+   argument stops at the canvas.
+
+What this costs: a mount trigger has to be a client component, so the floor is
+not quite zero. Phase 4 measures the island and the lazy chunk separately and
+reports both — the budget applies to the first-load figure, and the lazy chunk
+is reported next to it rather than hidden behind the fact that it does not
+count.
+
+Open question for Phase 5, recorded so it is not forgotten: whether any of the
+132.3 KB baseline is reducible at all on an App Router page with no client
+components. It will be measured before anything is claimed about it.
