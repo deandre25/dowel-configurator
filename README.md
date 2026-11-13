@@ -27,8 +27,8 @@ mutation carrying an impossible configuration is rejected there, not in the UI.
 | Language | TypeScript, `strict` + `noUncheckedIndexedAccess` | Grid indexing is the core of this domain, and unchecked index access is exactly how that goes wrong. |
 | Styling | Tailwind 4, theme as CSS custom properties | No component library for the interface chrome. |
 | GraphQL server | GraphQL Yoga, route handler at `app/api/graphql` | Fetch-API native, so it runs as a Next route handler unmodified. |
-| GraphQL client | urql | Lighter core than Apollo for a surface with no normalised cache to use. See `DECISIONS.md`. |
-| Types | graphql-codegen, schema-first | Types are generated from the SDL and committed; CI fails if they are stale. |
+| GraphQL client | None — generated typed documents and a `fetch` wrapper | Three operations, one view, nothing to cache or normalise. A client library would also break the first-load budget twice over. See `DECISIONS.md`. |
+| Types | graphql-codegen, schema-first | Types are generated from the SDL and committed; CI fails if they are stale. Documents are emitted as typed strings, so no part of `graphql` reaches the client. |
 | ORM | Prisma 7 with `@prisma/adapter-pg` | Plain connection strings. Pooled for requests, direct for migrations. |
 | Database | Neon Postgres | |
 | Unit tests | Vitest | |
