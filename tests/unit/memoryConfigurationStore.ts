@@ -9,6 +9,7 @@
  * deployed URL in CI.
  */
 import {
+  HashAlreadyTaken,
   IdAlreadyTaken,
   type ConfigurationStore,
   type NewConfiguration,
@@ -19,14 +20,20 @@ import { toStoredModules } from "@/lib/domain/stored";
 export type MemoryStore = ConfigurationStore & {
   /** Writes a row directly, to set up rows this build would refuse to write. */
   seed(row: StoredConfiguration): void;
-  /** Forces the next `n` creates to report the id as taken. */
+  /** Forces the next `n` creates to report the share id as taken. */
   rejectNextIds(count: number): void;
+  /** Forces the next create to report the build as already saved. */
+  rejectNextHash(): void;
+  /** Reports a row count higher than what is stored, to exercise the ceiling. */
+  pretendCount(count: number): void;
   readonly rows: ReadonlyMap<string, StoredConfiguration>;
 };
 
 export function memoryConfigurationStore(): MemoryStore {
   const rows = new Map<string, StoredConfiguration>();
   let idsToReject = 0;
+  let rejectHash = false;
+  let pretendedCount: number | null = null;
 
   return {
     rows,
@@ -39,8 +46,26 @@ export function memoryConfigurationStore(): MemoryStore {
       idsToReject = count;
     },
 
+    rejectNextHash() {
+      rejectHash = true;
+    },
+
+    pretendCount(count) {
+      pretendedCount = count;
+    },
+
     find(id) {
       return Promise.resolve(rows.get(id) ?? null);
+    },
+
+    findByHash(hash) {
+      return Promise.resolve(
+        [...rows.values()].find((row) => row.hash === hash) ?? null,
+      );
+    },
+
+    count() {
+      return Promise.resolve(pretendedCount ?? rows.size);
     },
 
     create(configuration: NewConfiguration) {
@@ -48,11 +73,19 @@ export function memoryConfigurationStore(): MemoryStore {
         idsToReject -= 1;
         return Promise.reject(new IdAlreadyTaken(configuration.id));
       }
+      if (rejectHash) {
+        rejectHash = false;
+        return Promise.reject(new HashAlreadyTaken(configuration.hash));
+      }
       if (rows.has(configuration.id)) {
         return Promise.reject(new IdAlreadyTaken(configuration.id));
       }
+      if ([...rows.values()].some((row) => row.hash === configuration.hash)) {
+        return Promise.reject(new HashAlreadyTaken(configuration.hash));
+      }
       const row: StoredConfiguration = {
         id: configuration.id,
+        hash: configuration.hash,
         width: configuration.width,
         height: configuration.height,
         finish: configuration.finish,

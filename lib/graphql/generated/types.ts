@@ -200,7 +200,9 @@ export type RuleCode =
   /** A unit with no modules at all. */
   | "EMPTY_UNIT"
   /** A module placed outside the grid. */
-  | "OUT_OF_BOUNDS";
+  | "OUT_OF_BOUNDS"
+  /** More modules than the largest unit has bays. */
+  | "TOO_MANY_MODULES";
 
 export type RuleViolation = {
   __typename?: "RuleViolation";

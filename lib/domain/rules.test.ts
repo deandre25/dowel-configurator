@@ -7,6 +7,7 @@ import {
   type PlacedModule,
 } from "@/lib/domain/grid";
 import {
+  MAX_MODULES,
   RULE_CODES,
   validateConfiguration,
   type RuleCode,
@@ -212,6 +213,45 @@ describe("rule 3 — a unit over four columns keeps its centre bottom cell for t
   });
 });
 
+describe("the module ceiling", () => {
+  it("accepts a unit with one module per bay of the largest grid", () => {
+    const width = LIMITS.maxWidth;
+    const height = LIMITS.maxHeight;
+    expect(width * height).toBe(MAX_MODULES);
+    const reserved = centreSupportColumn(width);
+    const modules: PlacedModule[] = [];
+    for (let column = 0; column < width; column += 1) {
+      for (let row = 0; row < height; row += 1) {
+        if (row === 0 && column === reserved) {
+          continue;
+        }
+        modules.push(shelf(column, row));
+      }
+    }
+    // One short of MAX_MODULES, because a bay is kept for the support — so the
+    // ceiling is above anything legal and never rejects a real unit.
+    expect(modules).toHaveLength(MAX_MODULES - 1);
+    expect(codes(unit(width, height, modules))).toEqual([]);
+  });
+
+  it("rejects an input carrying more modules than the largest unit has bays", () => {
+    const tooMany = Array.from({ length: MAX_MODULES + 1 }, () => shelf(0, 0));
+    expect(codes(unit(3, 3, tooMany))).toEqual(["TOO_MANY_MODULES"]);
+  });
+
+  it("reports the ceiling alone, without iterating a hostile input", () => {
+    // 100,000 overlapping modules would otherwise produce 100,000 violations.
+    const absurd = Array.from({ length: 100_000 }, () => shelf(0, 0));
+    const result = validateConfiguration(unit(3, 3, absurd));
+    expect(result.valid).toBe(false);
+    if (result.valid) {
+      return;
+    }
+    expect(result.violations).toHaveLength(1);
+    expect(result.violations[0]?.code).toBe("TOO_MANY_MODULES");
+  });
+});
+
 describe("rule 4 — a unit may not be entirely empty", () => {
   it("rejects a grid with no modules", () => {
     expect(codes(unit(3, 3, []))).toEqual(["EMPTY_UNIT"]);
@@ -337,6 +377,11 @@ describe("the shape of a violation", () => {
     // Guards against a code being added with a placeholder message.
     const samples: Readonly<Record<RuleCode, Configuration>> = {
       DIMENSIONS_OUT_OF_RANGE: unit(99, 3, [shelf(0, 0)]),
+      TOO_MANY_MODULES: unit(
+        3,
+        3,
+        Array.from({ length: MAX_MODULES + 1 }, () => shelf(0, 0)),
+      ),
       EMPTY_UNIT: unit(3, 3, []),
       OUT_OF_BOUNDS: unit(3, 3, [shelf(9, 0)]),
       DRAWER_IN_TOP_ROW: unit(3, 3, [drawer(0, 2)]),
