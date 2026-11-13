@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+/* The theme is a set of CSS custom properties; Tailwind reads them through
+   @theme so a value is never duplicated between CSS and a config file. */
+:root {
+  --dowel-page: #f6f4f1;
+  --dowel-surface: #fffefc;
+  --dowel-ink: #1b1816;
+  --dowel-ink-muted: #5c544e;
+  --dowel-line: #ddd7d0;
+  --dowel-accent: #7a5c3e;
+  --dowel-focus: #1f5fd0;
+}
+
+@theme inline {
+  --color-page: var(--dowel-page);
+  --color-surface: var(--dowel-surface);
+  --color-ink: var(--dowel-ink);
+  --color-ink-muted: var(--dowel-ink-muted);
+  --color-line: var(--dowel-line);
+  --color-accent: var(--dowel-accent);
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+}
+
+body {
+  background-color: var(--dowel-page);
+  color: var(--dowel-ink);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 2px solid var(--dowel-focus);
+  outline-offset: 2px;
+}
