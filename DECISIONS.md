@@ -105,3 +105,70 @@ reached through `@typescript-eslint` under `eslint-config-next`. The offered fix
 downgrades `eslint-config-next` from 16.4.6 to 15.5.29, which no longer matches
 Next 16. It is a dev-time linter dependency with no production code path, so it
 stays until the upstream chain updates.
+
+## 2026-11-13 — Yoga is handed Node's own Fetch API, not the ponyfill
+
+**Symptom.** In CI, every GraphQL request that hit an error returned an empty
+500. The server log said only:
+
+```
+TypeError: inspect is not a function
+    at rD.error (...)
+    at Object.maskError (...)
+```
+
+**Cause.** `@whatwg-node/node-fetch`, which Yoga falls back to when no
+`fetchAPI` is supplied, does `import { inspect } from "node:util"` in its
+`Headers` implementation. Turbopack's server bundle does not provide that
+export, so Yoga's logger threw while reporting the original error and the real
+error was lost behind a broken 500.
+
+**Fix.** `app/api/graphql/route.ts` passes Node 22's own `fetch`, `Request`,
+`Response`, `Headers` and friends as `fetchAPI`, so the ponyfill is never
+loaded.
+
+**Verified** against a built server (`next build && next start`): a resolver
+that throws now returns `{"errors":[{"message":"Unexpected error.",
+"extensions":{"code":"INTERNAL_SERVER_ERROR"}}]}`, and an unknown field
+returns `GRAPHQL_VALIDATION_FAILED`. The throwing resolver was a temporary
+probe and is not in the schema.
+
+**Gap, stated plainly.** The committed guard
+(`tests/e2e/landing.spec.ts`, malformed JSON body) exercises the error pipeline
+through the built server, but not the *unexpected*-error branch, which is the
+one that broke: inducing it requires a resolver that throws, and a deliberate
+one would be a dead control. Phase 2's integration tests cover the resolver
+behaviour, and this entry records that the bundling branch is covered by
+manual verification until a real failure path exists to assert on.
+
+## 2026-11-13 — The context exposes `db()`, not a `prisma` property
+
+The first version gave the context a lazy getter so that a request which never
+touches the database would not require `DATABASE_URL`. Yoga assembles its final
+context by copying the object, which evaluates the getter — so the connection
+string was read on every request after all, and in CI, where no connection
+string exists, that threw before the resolver's own error handling could see
+it. The context now carries `db: () => PrismaClient`, which is only called by a
+resolver that actually needs a connection. Verified by running the built server
+with `.env.local` moved aside: `health` returns
+`{"ok":true,"database":false}` with status 200.
+
+## 2026-11-13 — Two defects CI caught that local runs did not
+
+Worth recording, because the brief asks for a fifth wrong instrument and these
+are two of its relatives:
+
+1. **Stale generated types.** `useIndexSignature` was removed from
+   `codegen.ts` without regenerating, so the committed types still carried
+   `Record<string, any>`. The local verification sequence never ran
+   `codegen:check`, because at that point there was nothing committed to diff
+   against. CI's freshness check found it on the first run.
+2. **Step order in CI.** The first-load budget drives headless Chromium, and it
+   ran before the step that installs the browser. It failed with Playwright's
+   missing-executable message rather than a budget verdict — a check that could
+   not have passed or failed honestly.
+3. **A leaked server process.** The measurement script killed `npx` rather than
+   the `next start` it had spawned, leaving port 3000 held and the browser
+   tests failing with "port already used". It now starts the server in its own
+   process group and signals the group. Verified by running the measurement
+   twice in a row and asserting the port is free after each.
