@@ -52,14 +52,41 @@ async function waitForServer(url: string, timeoutMs: number): Promise<void> {
   }
 }
 
+async function stopServer(server: ChildProcess | undefined): Promise<void> {
+  const pid = server?.pid;
+  if (server === undefined || pid === undefined) {
+    return;
+  }
+  const exited = new Promise<void>((resolve) => {
+    server.once("exit", () => resolve());
+  });
+  // Negative pid: the whole process group, which is why it was detached.
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    server.kill("SIGTERM");
+  }
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+  await Promise.race([exited, timeout]);
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // already gone
+  }
+}
+
 async function main(): Promise<void> {
   const url = argValue("--url") ?? "http://127.0.0.1:3000/";
   const budgetKb = argValue("--budget-kb");
 
   let server: ChildProcess | undefined;
   if (process.argv.includes("--serve")) {
+    // Its own process group, so stopping it stops `next` and not just the
+    // wrapper that launched it. Leaving the server behind holds port 3000 and
+    // breaks whatever runs next.
     server = spawn("npx", ["next", "start", "--port", "3000"], {
       stdio: "ignore",
+      detached: true,
     });
     await waitForServer(url, 60_000);
   }
@@ -87,7 +114,7 @@ async function main(): Promise<void> {
   // straggling response a moment to be recorded.
   await page.waitForTimeout(500);
   await browser.close();
-  server?.kill();
+  await stopServer(server);
 
   const total = scripts.reduce((sum, s) => sum + s.bodyBytes, 0);
   const headers = scripts.reduce((sum, s) => sum + s.headerBytes, 0);
