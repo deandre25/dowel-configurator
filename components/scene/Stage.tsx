@@ -36,6 +36,10 @@ type StageProps = {
   readonly preset?: CameraPreset;
   readonly instant: boolean;
   readonly onFrame?: (stats: RenderStats, frameMs: number) => void;
+  readonly onGpuSamples?: (
+    samples: readonly number[],
+    available: boolean,
+  ) => void;
 };
 
 const FIELD_OF_VIEW = 32;
@@ -82,6 +86,7 @@ export function Stage({
   preset = "threeQuarter",
   instant,
   onFrame,
+  onGpuSamples,
 }: StageProps): React.ReactElement {
   const camera = cameraFor(configuration, preset);
   const size = unitSize(configuration.width, configuration.height);
@@ -124,6 +129,7 @@ export function Stage({
         configuration={configuration}
         instant={instant}
         {...(onFrame === undefined ? {} : { onFrame })}
+        {...(onGpuSamples === undefined ? {} : { onGpuSamples })}
       />
 
       <Floor

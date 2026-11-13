@@ -192,11 +192,21 @@ type FrameMeasurement = {
   fps: number;
   frames: number;
   worstFrameMs: number;
-  /** What the scene spent preparing a frame, which the display cap cannot hide. */
+  /**
+   * CPU milliseconds the scene spent preparing a frame — easing and writing
+   * matrices. This is submission cost, not the cost of the frame.
+   */
   medianWorkMs: number;
   worstWorkMs: number;
   dropped: number;
+  /** GPU milliseconds per frame, or null where the extension is unavailable. */
+  gpuMedianMs: number | null;
+  gpuWorstMs: number | null;
 };
+
+function millis(value: number | null): string {
+  return value === null ? "unavailable" : `${value.toFixed(2)} ms`;
+}
 
 async function framesPerSecond(
   page: Page,
@@ -208,6 +218,7 @@ async function framesPerSecond(
     if (api !== undefined) {
       api.frames.length = 0;
       api.frameWork.length = 0;
+      api.gpuMs.length = 0;
     }
   });
 
@@ -224,6 +235,10 @@ async function framesPerSecond(
   const work = await page.evaluate(
     () => globalThis.__dowelMeasurement?.frameWork ?? [],
   );
+  const gpu = await page.evaluate(() => ({
+    samples: globalThis.__dowelMeasurement?.gpuMs ?? [],
+    available: globalThis.__dowelMeasurement?.gpuTimerAvailable ?? false,
+  }));
   if (timestamps.length < 2) {
     return {
       fps: 0,
@@ -232,6 +247,8 @@ async function framesPerSecond(
       medianWorkMs: 0,
       worstWorkMs: 0,
       dropped: 0,
+      gpuMedianMs: null,
+      gpuWorstMs: null,
     };
   }
   const first = timestamps[0] ?? 0;
@@ -257,6 +274,16 @@ async function framesPerSecond(
     }
   }
 
+  const gpuSorted = [...gpu.samples].sort((a, b) => a - b);
+  const gpuMedian =
+    gpu.available && gpuSorted.length > 0
+      ? (gpuSorted[Math.floor(gpuSorted.length / 2)] ?? null)
+      : null;
+  const gpuWorst =
+    gpu.available && gpuSorted.length > 0
+      ? (gpuSorted[gpuSorted.length - 1] ?? null)
+      : null;
+
   return {
     fps: ((timestamps.length - 1) / span) * 1000,
     frames: timestamps.length,
@@ -264,6 +291,8 @@ async function framesPerSecond(
     medianWorkMs: median,
     worstWorkMs: worstWork,
     dropped,
+    gpuMedianMs: gpuMedian,
+    gpuWorstMs: gpuWorst,
   };
 }
 
@@ -452,12 +481,12 @@ async function main(): Promise<void> {
         `    renderer: ${profileRenderer}, ${String(Math.round(pixels / 10_000) / 100)} megapixels\n` +
         `    throttle: ${throttleNote}\n` +
         `    ceiling: ${ceiling.toFixed(1)} fps — requestAnimationFrame with nothing driven\n` +
-        `    orbiting ${orbiting.fps.toFixed(1).padStart(5)} fps over ${String(orbiting.frames)} frames, ` +
-        `${String(orbiting.dropped)} dropped, scene work ${orbiting.medianWorkMs.toFixed(2)} ms median / ` +
-        `${orbiting.worstWorkMs.toFixed(2)} ms worst\n` +
-        `    resizing ${resizing.fps.toFixed(1).padStart(5)} fps over ${String(resizing.frames)} frames, ` +
-        `${String(resizing.dropped)} dropped, scene work ${resizing.medianWorkMs.toFixed(2)} ms median / ` +
-        `${resizing.worstWorkMs.toFixed(2)} ms worst\n`,
+        `    orbiting ${orbiting.fps.toFixed(1).padStart(5)} fps over ${String(orbiting.frames)} frames, ${String(orbiting.dropped)} dropped\n` +
+        `               CPU ${orbiting.medianWorkMs.toFixed(2)} ms median / ${orbiting.worstWorkMs.toFixed(2)} ms worst   ` +
+        `GPU ${millis(orbiting.gpuMedianMs)} median / ${millis(orbiting.gpuWorstMs)} worst\n` +
+        `    resizing ${resizing.fps.toFixed(1).padStart(5)} fps over ${String(resizing.frames)} frames, ${String(resizing.dropped)} dropped\n` +
+        `               CPU ${resizing.medianWorkMs.toFixed(2)} ms median / ${resizing.worstWorkMs.toFixed(2)} ms worst   ` +
+        `GPU ${millis(resizing.gpuMedianMs)} median / ${millis(resizing.gpuWorstMs)} worst\n`,
     );
 
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
