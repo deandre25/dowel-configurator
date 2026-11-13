@@ -1,0 +1,28 @@
+// Connection strings live in prisma.config.ts and in the client factory, not
+// here: Prisma 7 removed `url`/`directUrl` from the schema datasource.
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/db/generated"
+}
+
+enum Finish {
+  OAK
+  CHARCOAL
+  WHITE
+}
+
+/// A saved build, addressed by a short id that becomes the share link.
+/// `modules` holds the placed modules as written by the server; it is
+/// re-validated on read, because a row could have been edited by hand.
+model Configuration {
+  id        String   @id
+  width     Int
+  height    Int
+  finish    Finish
+  modules   Json
+  createdAt DateTime @default(now())
+}
