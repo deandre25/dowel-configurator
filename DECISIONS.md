@@ -856,3 +856,119 @@ composite for an effect this gets most of, and judging it by frame rate would
 have shown nothing either way because the frame rate is capped.
 
 The pulls are left out: they stand proud of the unit and are not in a bay.
+
+## 2026-11-14 — The client holds a configuration and nothing else
+
+`Configurator.tsx` contains no price and no rule. It holds a configuration,
+sends it to `priceConfiguration` after every change, and renders the answer:
+either a price with its breakdown, or the rules the unit breaks with the bays
+they are about. The `InvalidConfiguration` branch is the server's verdict, not
+a guess made before asking.
+
+The one piece of domain logic on the client is `lib/configurator/state.ts`,
+which decides what a change *means* — placing a door takes the bay above it,
+narrowing the unit drops what no longer fits. It is not a second opinion on
+legality: it keeps the client from constructing obvious nonsense so that the
+server's rejections are the interesting ones. Seventeen tests cover it,
+including one that applies two hundred changes in sequence and asserts no two
+modules ever claim one bay.
+
+### Staleness is a property of the data, not a flag
+
+The server's answer is stored together with the configuration it answers:
+
+```ts
+const [answer, setAnswer] = useState<{ source: Configuration; priced: Priced }>
+const pending = answer?.source !== configuration
+```
+
+The reducer returns a new object for every change, so an answer is stale
+exactly when its `source` is not the configuration on screen. There is no
+`setPending(true)` to forget, and the live region cannot announce a price for a
+unit the visitor has already changed. Requests also carry a ticket, and a reply
+whose ticket is not the latest is dropped — a slow network cannot put an old
+price on screen either.
+
+## 2026-11-14 — No client library, and what replaced it
+
+Decided at Gate 1 and now built: graphql-codegen's client preset with
+`documentMode: "string"`, and one function.
+
+- Every operation is checked against the SDL at build time, so a mistyped field
+  is a build failure rather than a runtime null.
+- `request(PriceConfiguration, { input })` returns the type that operation
+  returns. The typed client the brief asks for is here; the cache, the
+  normalisation and the subscriptions a library would also bring are not,
+  because this surface has nothing for them to do.
+- A document is its query text, so no part of the `graphql` package reaches the
+  browser.
+
+The landing route is 137.9 KB against a 150 KB budget, up 5.2 KB from Phase 3
+— the mount button and its loader. The configurator, the client and the entire
+3D view are behind one dynamic import.
+
+## 2026-11-14 — The canvas renders on demand
+
+`frameloop="demand"`. Nothing in this scene moves on its own, so a frame is
+drawn when the configuration changes, while a change is easing, and while the
+camera is being dragged. The transition asks for the next frame itself, for as
+long as anything is still moving.
+
+It was found for the wrong reason — four headless browsers running software
+WebGL saturated the machine and browser tests timed out on assertions whose
+text was already on screen. The contention was the harness's. But the defect it
+exposed was real and the phone is where it matters: a unit standing still was
+redrawing sixty times a second, indefinitely.
+
+Measured after the change: still 60 fps while orbiting and while resizing, 0
+dropped frames. The difference is what happens when the visitor does nothing,
+which is now nothing.
+
+## 2026-11-14 — Two markup decisions the tests made for me
+
+**The headline price is labelled.** `£493.10` appears three times on the panel
+— the total, the subtotal, and the finish line — and a test matching that text
+matched all three. The fix is not a test-only selector: the figure is now
+preceded by a screen-reader-only "Total price: ", because reading an amount
+aloud with nothing to say which amount it is was ambiguous for a person too.
+
+**The radio inputs are invisible, not clipped.** They were `sr-only`, which is
+the usual way to hide an input and style its label. It also puts the control
+out of reach of anything that drives a page by pointing at elements — the
+browser tests could not check them, and the same is true of some assistive
+tooling and of a mistapped finger. They now cover their label at full size with
+`opacity-0`, so the hit target is the whole control. Keyboard behaviour,
+grouping and announcement are unchanged, because they were never the problem.
+
+In both cases the test failure was a real defect in the interface, found by a
+harness that happens to interact with a page the way an unusual visitor does.
+
+## 2026-11-14 — A share link opens the configurator, and needs JavaScript
+
+`/u/<id>` hands the id to the client, which fetches the build through the same
+typed query the rest of the interface uses. Following the link is the asking,
+so the configurator opens on the saved build rather than waiting for a click.
+
+**The cost, stated plainly:** that page is empty without JavaScript. The
+configurator is a client island by the Gate 1 architecture decision, so there
+is no version of this that works without it, and server-rendering the restored
+build would mean a second path to the same data — either an in-process
+`execute` against the schema with a cast at the boundary, or an HTTP call from
+the server to itself. Neither is worth a second source of truth for a page
+whose entire purpose is an interactive control surface.
+
+An unknown or malformed id is not an error: the server answers null, the page
+says the link does not match a saved build, and offers a unit to start from.
+
+## 2026-11-14 — Gates broken, third round
+
+| Gate | Broken by | Result |
+| --- | --- | --- |
+| Vitest, configurator state | — | 17 new tests; one caught that widening a unit onto the support's bay can empty it, which the server then reports as `EMPTY_UNIT` |
+| Generated types | the committed client document tampered with | exit 1, "client/graphql.ts: differs from a fresh generation" |
+| Playwright, configurator | — | the suite itself found two interface defects, above |
+
+The generated-types check also had a defect of its own, found when the output
+grew a subdirectory: it listed directories as files and died with `EISDIR`
+rather than reporting staleness. A gate that crashes is a gate that is not
+checking anything.
