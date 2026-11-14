@@ -972,3 +972,31 @@ The generated-types check also had a defect of its own, found when the output
 grew a subdirectory: it listed directories as files and died with `EISDIR`
 rather than reporting staleness. A gate that crashes is a gate that is not
 checking anything.
+
+## 2026-11-14 — A share link previews the build, not the site
+
+The body of `/u/<id>` needs JavaScript and that is a deliberate cost, recorded
+above. **The metadata is a different question**, and the previous entry was
+wrong to bundle them: the whole purpose of that route is that someone sends
+the link, and a preview carrying the site's generic blurb wastes the feature it
+exists for. A client island cannot have metadata by construction — but metadata
+is not the body.
+
+`generateMetadata` reads the build through `loadSavedConfiguration` and sets
+the title, description and Open Graph tags from it. The description is the
+sentence generated from the configuration the geometry is built from, plus the
+price.
+
+**This is not a second path to the same data.** `loadSavedConfiguration` is the
+function `Query.configuration` resolves through — the same parse, the same
+re-validation on read, the same pricing. It was extracted from the resolver
+rather than reimplemented, so the preview cannot describe a different unit from
+the page it links to. It needs nothing from a request, because the GraphQL
+context is a store and a ping, so there was no awkwardness to work around.
+
+Where they differ is in what a failure means. An unreadable row throws, which
+is right for a query and wrong for a preview, so the metadata catches it and
+falls back to describing the site. A broken link should be a dull preview, not
+a failed page. Verified for an unknown id and a malformed one, and both are
+asserted by a test that fetches the document the way a crawler would, with no
+JavaScript at all.
