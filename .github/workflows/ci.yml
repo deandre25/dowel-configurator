@@ -12,6 +12,35 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+
+    # CI gets its own Postgres rather than the project's Neon database.
+    #
+    # The save round-trip has to be exercised against a real database — an
+    # in-memory store raises the exceptions a test tells it to, which is how a
+    # dead retry path went unnoticed once already. A service container gives
+    # that for nothing, and no credential of the project's leaves the project.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: dowel
+          POSTGRES_PASSWORD: dowel
+          POSTGRES_DB: dowel
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # No pooler in front of it, so both URLs are the same connection. The
+      # distinction that matters in production — pooled for requests, direct
+      # for migrations — is a property of Neon, not of the code.
+      DATABASE_URL: postgresql://dowel:dowel@localhost:5432/dowel
+      DIRECT_URL: postgresql://dowel:dowel@localhost:5432/dowel
+
     steps:
       - uses: actions/checkout@v5
 
@@ -31,6 +60,9 @@ jobs:
 
       - name: Generated GraphQL types are current
         run: npm run codegen:check
+
+      - name: Apply migrations to the test database
+        run: npx prisma migrate deploy
 
       - name: Unit tests
         run: npm test
