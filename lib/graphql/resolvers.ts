@@ -8,17 +8,18 @@
  */
 import { GraphQLError } from "graphql";
 import { HashAlreadyTaken, IdAlreadyTaken } from "@/lib/db/configurationStore";
-import type { StoredConfiguration } from "@/lib/db/configurationStore";
+import {
+  loadSavedConfiguration,
+  toSavedConfiguration,
+} from "@/lib/server/savedConfiguration";
 import { hashConfiguration } from "@/lib/domain/canonical";
 import type { Configuration as DomainConfiguration } from "@/lib/domain/grid";
 import { priceConfiguration } from "@/lib/domain/pricing";
 import { validateConfiguration } from "@/lib/domain/rules";
-import { newShareId, normaliseShareId } from "@/lib/domain/shareId";
-import { parseStoredModules } from "@/lib/domain/stored";
+import { newShareId } from "@/lib/domain/shareId";
 import type {
   ConfigurationInput,
   Resolvers,
-  SavedConfiguration,
 } from "@/lib/graphql/generated/types";
 import {
   toCatalogue,
@@ -59,58 +60,12 @@ function fromInput(input: ConfigurationInput): DomainConfiguration {
   };
 }
 
-function toSavedConfiguration(row: StoredConfiguration): SavedConfiguration {
-  const modules = parseStoredModules(row.modules);
-  if (modules === null) {
-    // Not an invalid configuration the visitor can fix — a row this build
-    // cannot read. A GraphQL error, because something actually went wrong.
-    throw new GraphQLError("A saved configuration could not be read.", {
-      extensions: { code: "UNREADABLE_CONFIGURATION", id: row.id },
-    });
-  }
-
-  const configuration: DomainConfiguration = {
-    width: row.width,
-    height: row.height,
-    finish: row.finish,
-    modules,
-  };
-
-  // Validated on read as well as on write: a row could have been written by an
-  // older build or edited by hand, and a configuration that breaks a rule must
-  // not be priced as though it were legal.
-  const validation = validateConfiguration(configuration);
-  if (!validation.valid) {
-    throw new GraphQLError("A saved configuration is no longer valid.", {
-      extensions: {
-        code: "STORED_CONFIGURATION_INVALID",
-        id: row.id,
-        violations: validation.violations.map((violation) => violation.code),
-      },
-    });
-  }
-
-  return {
-    id: row.id,
-    createdAt: row.createdAt.toISOString(),
-    configuration: toConfiguration(configuration),
-    price: toPrice(priceConfiguration(configuration)),
-  };
-}
-
 export const resolvers: Resolvers = {
   Query: {
     catalogue: () => toCatalogue(),
 
-    configuration: async (_parent, args, context) => {
-      const id = normaliseShareId(args.id);
-      if (id === null) {
-        // A malformed id is a miss, not an error, and never becomes a query.
-        return null;
-      }
-      const row = await context.store().find(id);
-      return row === null ? null : toSavedConfiguration(row);
-    },
+    configuration: (_parent, args, context) =>
+      loadSavedConfiguration(context, args.id),
 
     health: async (_parent, _args, context) => ({
       ok: true,

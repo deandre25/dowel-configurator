@@ -196,3 +196,35 @@ test("the canvas describes the unit, and the description follows the build", asy
     timeout: 15_000,
   });
 });
+
+test("a share link previews the build, not the site", async ({
+  page,
+  request,
+}) => {
+  await openConfigurator(page);
+  await page.getByRole("radio", { name: "Charcoal" }).check();
+  await expect(total(page, "£532.55")).toBeVisible();
+  await page.getByRole("button", { name: "Save this build" }).click();
+
+  const shareUrl = await page.getByLabel("Link to this build").inputValue();
+
+  // Fetched as a crawler would: no JavaScript, just the document.
+  const document = await (await request.get(shareUrl)).text();
+
+  expect(document).toContain("<title>A 3 × 3 shelving unit, £532.55 — Dowel");
+  expect(document).toContain("3-column, 3-row unit in charcoal");
+  expect(document).toContain('property="og:title"');
+  expect(document).toContain('property="og:description"');
+
+  // The body still needs JavaScript; the preview does not.
+  expect(document).toContain("£532.55");
+});
+
+test("an unknown share link previews the site rather than failing", async ({
+  request,
+}) => {
+  for (const id of ["ZZZZZZZZ", "not-an-id"]) {
+    const document = await (await request.get(`/u/${id}`)).text();
+    expect(document).toContain("<title>Dowel — a shared build</title>");
+  }
+});
