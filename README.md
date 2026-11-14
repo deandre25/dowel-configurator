@@ -7,9 +7,9 @@ update, and shares the result as a link that restores the exact build.
 Dowel is a fictional company. This is a demonstration project and nothing here
 is for sale.
 
-> Phase 2 of five, plus the gate's follow-ups. The domain and the API are done
-> and tested; the scene and the configurator follow. This file is finished in Phase 5 with the live link,
-> the schema, and the measured numbers.
+> Phase 4 of five. The domain, the API, the scene and the configurator are
+> done; the performance and accessibility pass follows, and this file gets the
+> live link in Phase 5.
 
 ## What is server-authoritative
 
@@ -102,7 +102,7 @@ produced it.
 
 | Measurement | Value | Instrument | Date |
 | --- | --- | --- | --- |
-| First-load JS, landing route, gzipped | 132.7 KB, budget 150 KB | `npm run measure:bundle` — headless Chromium against `next start`, summing the response bodies of every script the page fetched | 2026-11-13 |
+| First-load JS, landing route, gzipped | 137.9 KB, budget 150 KB | `npm run measure:bundle` — headless Chromium against `next start`, summing the response bodies of every script the page fetched | 2026-11-13 |
 | 3D in the landing route | none | the six chunks that figure covers are the complete set the route requests; no `three`, `@react-three/fiber` or `drei` among them | 2026-11-13 |
 | Everything the 3D view downloads | 549 KB (408 KB JavaScript, 128 KB environment map) | `npm run measure:scene-payload` | 2026-11-13 |
 | Draw calls, smallest unit | 10 | `npm run measure:scene` — `WebGLRenderer.info.render`, headed Chromium on ANGLE Metal / Apple M1 | 2026-11-13 |
