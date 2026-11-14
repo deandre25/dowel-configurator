@@ -116,7 +116,10 @@ export function Stage({
       // the kernel; variance maps take a blur radius, which is what a shadow
       // in a room actually has. Everything else is lit by the environment map.
       shadows="variance"
-      frameloop="always"
+      // On demand, not continuously. Nothing in this scene moves on its own,
+      // so a frame is drawn when the configuration changes, while a change is
+      // easing, or while the camera is being dragged — and not otherwise.
+      frameloop="demand"
     >
       <Environment
         files="/environment/studio-small-09-256.hdr"

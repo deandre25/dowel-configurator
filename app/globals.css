@@ -10,9 +10,12 @@
   --dowel-line: #ddd7d0;
   --dowel-accent: #7a5c3e;
   --dowel-focus: #1f5fd0;
+  /* For a rule the visitor has broken. Not red: nothing here is an error. */
+  --dowel-warning: #8a4b1f;
 }
 
 @theme inline {
+  --color-warning: var(--dowel-warning);
   --color-page: var(--dowel-page);
   --color-surface: var(--dowel-surface);
   --color-ink: var(--dowel-ink);
