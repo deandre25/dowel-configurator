@@ -245,3 +245,162 @@ count.
 Open question for Phase 5, recorded so it is not forgotten: whether any of the
 132.3 KB baseline is reducible at all on an App Router page with no client
 components. It will be measured before anything is claimed about it.
+
+## 2026-11-13 — Row 0 is the floor
+
+Coordinates are `column` from the left and `row` from the **bottom**, both
+zero-based. The rules are written in terms of the top row and the bottom row,
+and "a door spans the top edge" only means something if up is the positive
+direction: with row 0 at the top, a door starting in the top row would be the
+one placement that is obviously fine.
+
+The accessible control surface will render rows in the opposite order, top
+first, because that is how a table reads. That is presentation and it does not
+reach the domain.
+
+## 2026-11-13 — Which column the centre support stands in, for even widths
+
+Rule 3 reserves "the middle column of the bottom row". A unit 6 columns wide
+has no middle column. `centreSupportColumn` is `Math.floor(width / 2)`: the
+true middle for an odd width, and the right-hand one of the two central
+columns for an even width.
+
+Arbitrary, but fixed, documented, and known in exactly one place, so the
+resolver, the validator, the price, the description and later the geometry
+cannot disagree about where the support is.
+
+## 2026-11-13 — An invalid configuration is a result, not an error
+
+`priceConfiguration` and `saveConfiguration` return unions:
+
+```graphql
+union PriceConfigurationResult = PricedConfiguration | InvalidConfiguration
+union SaveConfigurationResult  = SavedConfiguration | InvalidConfiguration
+```
+
+A visitor placing a drawer in the top row has not caused a server error; they
+have been told no. It arrives in `data`, with the rule code, a message written
+for a person, and the cells at fault, so the interface can render it beside the
+offending bay. GraphQL errors are kept for faults in the server — an
+unreadable row, an id that cannot be allocated — where there is nothing the
+visitor can do.
+
+A violation also carries `moduleIndex`, so the interface can point at the
+module the visitor just moved rather than at the cell alone.
+
+## 2026-11-13 — Money is integer pence, and the finish multiplier is basis points
+
+No decimal appears anywhere in pricing. Prices are integer pence; a finish
+multiplier is basis points, where 10000 is ×1. The multiplier is applied once,
+to the subtotal, rather than per line, so the whole calculation contains
+exactly one rounding step.
+
+The prices were then chosen so that rounding actually happens. With round
+numbers — a frame at 18000, cells at 2200 — every subtotal was a multiple of
+200, every multiplier divided it exactly, and the rounding step was dead code
+that no test could distinguish from its absence. The catalogue now reads 17950,
+2175, 1395, 4795 and 5595, and `52710 × 1.05 = 55345.5` is in the pricing table
+as the half-way case.
+
+## 2026-11-13 — The pricing table is computed outside the implementation
+
+`lib/domain/pricing.test.ts` asserts literal totals that were worked out in a
+separate script, not by calling the function under test. A test that recomputes
+the expected value the same way the implementation does is a test that agrees
+with any arithmetic, including wrong arithmetic.
+
+One test in that file was rewritten for the same reason. It had asserted that a
+per-line multiplier would give a different total from a multiplier applied to
+the subtotal — and for the configuration it used, the two agreed, so the test
+failed. The replacement asserts the formula across every unit size and finish,
+and a second test searches for a configuration that distinguishes the two
+methods, so the property is established rather than assumed from one sample.
+
+## 2026-11-13 — Every bay is charged, including the one the support stands in
+
+A unit over four columns wide loses its centre bottom bay to a support, and
+that bay is still priced. The frame is built for the full grid either way. The
+alternative — charging for usable bays — would make a 5-wide unit cheaper than
+a 4-wide one at one width, which is not how the thing is manufactured.
+
+## 2026-11-13 — Saved configurations are validated on read as well as on write
+
+`saveConfiguration` validates before it persists, and
+`Query.configuration` validates again after it loads. A row could have been
+written by an earlier build whose rules were different, or edited by hand. A
+configuration that breaks a rule must not be priced as though it were legal, so
+the resolver answers with a GraphQL error carrying
+`STORED_CONFIGURATION_INVALID` and the codes it broke, rather than a confident
+price for an impossible unit.
+
+A row whose `modules` column will not parse is `UNREADABLE_CONFIGURATION` for
+the same reason. Both are server faults, not visitor mistakes.
+
+## 2026-11-13 — The resolvers depend on a narrow store, not on PrismaClient
+
+`ConfigurationStore` is two methods: `find` and `create`. Prisma implements it
+in `lib/db/prismaConfigurationStore.ts`; the tests implement it in memory.
+
+This is what lets the integration tests run the real schema, the real resolvers
+and the real rules with no database, and without casting a `PrismaClient` into
+something it is not. It also states what the resolvers need from storage, which
+is less than a client gives them.
+
+**The gap it leaves, stated plainly:** an in-memory store cannot prove that
+Postgres behaves as expected. Save-then-restore is therefore also run against
+Neon by hand at this gate, and will run against the deployed URL in CI in
+Phase 5.
+
+## 2026-11-13 — Share ids are random Crockford base32, not sequential
+
+Eight characters of Crockford base32: 40 bits, 1.1 × 10^12 ids. The alphabet
+omits I, L, O and U, because these ids get read aloud, typed from a phone
+screen and pasted out of chat messages, and 0/O and 1/I are what break that.
+`normaliseShareId` folds those confusions and upper-cases, so a mistyped link
+still resolves.
+
+Random rather than sequential, so a share link does not disclose how many units
+have been saved or let a visitor walk to the next one. A malformed id is a miss,
+not an error, and never becomes a database query.
+
+`saveConfiguration` retries five times on a collision and then fails with
+`ID_ALLOCATION_FAILED` rather than letting the storage layer's own exception
+reach the client.
+
+## 2026-11-13 — The generated-types check no longer asks git
+
+`codegen:check` was `graphql-codegen && git diff --exit-code`. That fails for a
+generated file which is correct but not yet committed, which is a check
+reporting staleness when nothing is stale — and a check that cries wolf is a
+check people stop reading.
+
+`scripts/check-generated.ts` copies the generated directory, regenerates, and
+compares the two. It depends on no git state. Verified by tampering with the
+committed file and confirming exit code 1, then restoring it and confirming 0 —
+a check that has never been seen to fail is not known to work.
+
+## 2026-11-13 — The fourth wrong instrument: one library, two module instances
+
+The integration tests asserted that `Query.configuration` answers
+`UNREADABLE_CONFIGURATION` for a row it cannot parse. They got
+`INTERNAL_SERVER_ERROR` instead, and the resolver was correct.
+
+graphql 17 ships several builds of itself and chooses between them by export
+condition. Vitest resolves the `development` build for the source it transforms
+and leaves Yoga external, where Node resolves `index.mjs` — so two module
+instances, with two separate `GraphQLError` classes. Yoga decides whether to
+mask an error with `error instanceof GraphQLError`, that check was false across
+the boundary, and every deliberate, typed error the resolvers raised was
+replaced by a generic one. "One version installed" is not the same as one
+module instance.
+
+Two things worth keeping from it:
+
+- The fix is one line of Vitest config, pinning `graphql` to the build Node
+  resolves. It is in `vitest.config.mts` with the reasoning next to it, because
+  the next person to see "Duplicate graphql modules" will not guess.
+- **It was a test-environment artefact, and the only way to know that was to
+  check.** A planted row in Neon, queried through a real `next build && next
+  start`, returns `UNREADABLE_CONFIGURATION` with its code intact — Turbopack
+  bundles one copy. Had I trusted the test, I would have "fixed" a working error
+  path; had I trusted the fix, I would not have known production was fine.
