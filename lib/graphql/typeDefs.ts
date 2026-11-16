@@ -77,6 +77,8 @@ export const typeDefs = /* GraphQL */ `
   enum RuleCode {
     "The grid is outside the sizes the system is built in."
     DIMENSIONS_OUT_OF_RANGE
+    "More modules than the largest unit has bays."
+    TOO_MANY_MODULES
     "A unit with no modules at all."
     EMPTY_UNIT
     "A module placed outside the grid."

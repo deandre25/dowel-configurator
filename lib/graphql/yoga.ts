@@ -14,6 +14,11 @@ export function createYogaServer(context: () => GraphQLContext) {
     schema,
     context,
     graphqlEndpoint: GRAPHQL_ENDPOINT,
+    // Yoga defaults to 25 MB. The largest legal request this API accepts is a
+    // 30-module configuration plus the query text, which is a few kilobytes,
+    // so a request over 64 KB is not a configuration and is refused before it
+    // is parsed.
+    maxRequestBodySize: 64 * 1024,
     // Node 22 implements all of this natively. Handing Yoga the platform
     // objects keeps it off @whatwg-node/node-fetch, whose Headers imports
     // `inspect` from node:util — absent from Turbopack's server bundle, so the
