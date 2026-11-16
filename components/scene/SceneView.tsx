@@ -30,6 +30,7 @@ import {
   installMeasurement,
   measurementRequested,
   recordFrame,
+  recordGpuSamples,
   type MeasurementApi,
 } from "@/components/scene/measurement";
 
@@ -162,6 +163,16 @@ export function SceneView({
     }
   }, []);
 
+  const onGpuSamples = useCallback(
+    (samples: readonly number[], available: boolean) => {
+      const current = api.current;
+      if (current !== null) {
+        recordGpuSamples(current, samples, available);
+      }
+    },
+    [],
+  );
+
   const shown: Configuration =
     override === null
       ? configuration
@@ -184,7 +195,7 @@ export function SceneView({
             configuration={shown}
             instant={reducedMotion}
             {...(preset === undefined ? {} : { preset })}
-            {...(measuring ? { onFrame } : {})}
+            {...(measuring ? { onFrame, onGpuSamples } : {})}
           />
         ) : null}
       </div>

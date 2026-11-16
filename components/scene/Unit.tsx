@@ -34,6 +34,11 @@ import {
 } from "three";
 import type { Configuration } from "@/lib/domain/grid";
 import {
+  UNSUPPORTED_CONTEXT,
+  createGpuTimer,
+  type GpuTimer,
+} from "@/components/scene/gpuTimer";
+import {
   PART_CAPACITY,
   PART_SHAPE,
   PART_TYPES,
@@ -61,12 +66,15 @@ type UnitProps = {
   readonly instant: boolean;
   /** Called after each rendered frame, if anything wants the numbers. */
   readonly onFrame?: (stats: RenderStats, frameMs: number) => void;
+  /** Called with whatever GPU timings have become available. */
+  readonly onGpuSamples?: (samples: readonly number[], available: boolean) => void;
 };
 
 export function Unit({
   configuration,
   instant,
   onFrame,
+  onGpuSamples,
 }: UnitProps): React.ReactElement {
   const geometries = useMemo<Record<"box" | "rod", BufferGeometry>>(() => {
     // A unit cube and a unit-length rod. Every part is one of these, scaled.
@@ -146,7 +154,36 @@ export function Unit({
     };
   }, [geometries]);
 
+  const gpuTimer = useRef<GpuTimer | null>(null);
+
+  useEffect(() => {
+    return () => {
+      gpuTimer.current?.dispose();
+      gpuTimer.current = null;
+    };
+  }, []);
+
   useFrame((state, delta) => {
+    // Opened before this frame's work and closed on the next one, so the
+    // query spans the draw R3F issues after every useFrame callback.
+    if (onGpuSamples !== undefined) {
+      if (gpuTimer.current === null) {
+        // Taken from the canvas rather than from `renderer.getContext()`:
+        // asking the renderer produced a context the extension could not be
+        // obtained from, and the timer then never started and said nothing.
+        // A canvas returns its existing context, so this is the same one the
+        // renderer draws with.
+        const context = state.gl.domElement.getContext("webgl2");
+        gpuTimer.current =
+          context === null ? UNSUPPORTED_CONTEXT : createGpuTimer(context);
+      }
+      const timer = gpuTimer.current;
+      if (timer !== null) {
+        onGpuSamples(timer.end(), timer.available);
+        timer.begin();
+      }
+    }
+
     const started = performance.now();
     transition.advance(delta);
 
