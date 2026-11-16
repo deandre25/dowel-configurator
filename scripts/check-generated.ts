@@ -10,14 +10,28 @@
  *   npx tsx scripts/check-generated.ts
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const GENERATED = "lib/graphql/generated";
 
+/**
+ * Files only. The generated output grew a subdirectory when the client
+ * documents were added, and a recursive listing includes directories — which
+ * then failed with EISDIR when read as files.
+ */
 function fileList(directory: string): readonly string[] {
-  return readdirSync(directory, { recursive: true, encoding: "utf8" }).sort();
+  return readdirSync(directory, { recursive: true, encoding: "utf8" })
+    .filter((name) => statSync(join(directory, name)).isFile())
+    .sort();
 }
 
 const backup = mkdtempSync(join(tmpdir(), "dowel-generated-"));

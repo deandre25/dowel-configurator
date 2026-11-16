@@ -7,9 +7,9 @@ update, and shares the result as a link that restores the exact build.
 Dowel is a fictional company. This is a demonstration project and nothing here
 is for sale.
 
-> Phase 2 of five, plus the gate's follow-ups. The domain and the API are done
-> and tested; the scene and the configurator follow. This file is finished in Phase 5 with the live link,
-> the schema, and the measured numbers.
+> Phase 4 of five. The domain, the API, the scene and the configurator are
+> done; the performance and accessibility pass follows, and this file gets the
+> live link in Phase 5.
 
 ## What is server-authoritative
 
@@ -27,10 +27,50 @@ field of the API, not a string assembled in the component — so the sentence a
 screen reader hears cannot drift from the unit that is drawn. It updates
 because it is part of the same answer as the price.
 
+The same sentence is the share link's preview. `/u/<id>` reads the build
+through `loadSavedConfiguration`, the function `Query.configuration` resolves
+through, and sets its title, description and Open Graph tags from it — so a
+link sent to someone describes the unit and its price rather than the site.
+One function, two callers; a preview cannot describe a different unit from the
+page it links to.
+
 **No float touches a price.** Money is integer pence and a finish multiplier is
 basis points, where 10000 is ×1, so the arithmetic stays in integers and rounds
 exactly once — at the end, on the only division in the calculation. Nothing in
 the API carries a rounded decimal, and nothing accumulates an error per module.
+
+## Accessibility bought testability
+
+**No browser test in this repository touches the canvas.** All twenty drive the
+table of bays and the radio groups, and they are the same controls a keyboard
+or a screen reader uses. That is not a coincidence and it is not a compliance
+box: it follows from building the accessible surface first and treating the 3D
+view as a view of it.
+
+What it buys is concrete. A 3D application is tested in CI **with no WebGL at
+all** — no GPU, no software rasteriser, no flakiness from a renderer that
+behaves differently on a build agent than on a desk. The canvas is exercised
+separately, by a measurement script that runs on a real GPU and says which one.
+An interface that can only be driven by pointing at a picture cannot be tested
+that way, and the usual answer — screenshot diffing a renderer — is slower and
+less certain than asserting that a bay now holds a drawer.
+
+The accessible path is the one under test on every commit, which also means it
+cannot quietly rot.
+
+### A control hidden by clipping is a control out of reach
+
+The radio inputs were `sr-only` — the standard trick for hiding an input and
+styling its label. The browser tests could not operate them, and the reflex is
+to reach for `force: true` and move on.
+
+The harness was right. A clipped control has no hit target, which puts it out
+of reach of anything that drives a page by pointing at elements rather than by
+tabbing: test runners, yes, but also switch access, eye tracking, some screen
+reader click-by-name modes, and a finger landing a few pixels off. The inputs
+now cover their labels at full size with `opacity-0`, so the hit target is the
+whole control. Keyboard behaviour and announcement are unchanged, because they
+were never what was broken.
 
 ## The product
 
@@ -102,7 +142,7 @@ produced it.
 
 | Measurement | Value | Instrument | Date |
 | --- | --- | --- | --- |
-| First-load JS, landing route, gzipped | 132.7 KB, budget 150 KB | `npm run measure:bundle` — headless Chromium against `next start`, summing the response bodies of every script the page fetched | 2026-11-13 |
+| First-load JS, landing route, gzipped | 137.9 KB, budget 150 KB | `npm run measure:bundle` — headless Chromium against `next start`, summing the response bodies of every script the page fetched | 2026-11-13 |
 | 3D in the landing route | none | the six chunks that figure covers are the complete set the route requests; no `three`, `@react-three/fiber` or `drei` among them | 2026-11-13 |
 | Everything the 3D view downloads | 549 KB (408 KB JavaScript, 128 KB environment map) | `npm run measure:scene-payload` | 2026-11-13 |
 | Draw calls, smallest unit | 10 | `npm run measure:scene` — `WebGLRenderer.info.render`, headed Chromium on ANGLE Metal / Apple M1 | 2026-11-13 |

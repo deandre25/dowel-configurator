@@ -19,7 +19,7 @@
  * Everything allocated here is disposed on unmount, including the geometries
  * and the materials, which R3F does not own and will not collect.
  */
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import {
   BoxGeometry,
@@ -118,6 +118,14 @@ export function Unit({
 
   const transition = useMemo(() => new PartTransition(instant), [instant]);
 
+  /**
+   * Asks for another frame. The canvas renders on demand rather than
+   * continuously: a unit that is not moving does not need redrawing sixty
+   * times a second, and on a phone that is the difference between a view and a
+   * battery drain.
+   */
+  const invalidate = useThree((state) => state.invalidate);
+
   // Scratch objects, reused for every instance of every frame rather than
   // allocated inside the loop.
   const scratch = useRef({
@@ -130,7 +138,9 @@ export function Unit({
 
   useEffect(() => {
     transition.setTarget(assembleUnit(configuration));
-  }, [configuration, transition]);
+    // The configuration changed, so something has to move.
+    invalidate();
+  }, [configuration, transition, invalidate]);
 
   useEffect(() => {
     return () => {
@@ -185,7 +195,10 @@ export function Unit({
     }
 
     const started = performance.now();
-    transition.advance(delta);
+    // Keep asking for frames for as long as anything is still easing.
+    if (transition.advance(delta)) {
+      invalidate();
+    }
 
     const { matrix, position, scale, quaternion, euler } = scratch.current;
     const grouped = transition.byType();
