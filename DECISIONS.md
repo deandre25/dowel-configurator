@@ -1000,3 +1000,90 @@ falls back to describing the site. A broken link should be a dull preview, not
 a failed page. Verified for an unknown id and a malformed one, and both are
 asserted by a test that fetches the document the way a crawler would, with no
 JavaScript at all.
+
+## 2026-11-17 — A browser with no WebGL lost the entire configurator
+
+The claim this project makes most often is that the canvas is a view of the
+controls rather than the way in. It was not true.
+
+Launching the deployed site with WebGL disabled produced **zero bay controls,
+no price, and one console error**: `THREE.WebGLRenderer: Error creating WebGL
+context`. An uncaught error inside the canvas took the whole island down with
+it — the table, the radio groups, the price panel, all of it.
+
+WebGL is unavailable more often than a developer's machine suggests: old
+hardware, a driver on the browser's blocklist, enterprise policy, privacy
+extensions, and a GPU process that has crashed once too often in the current
+session.
+
+The canvas is now wrapped in an error boundary that falls back to describing
+the unit in words, in the space the canvas would have occupied. A browser test
+runs with WebGL switched off and asserts the price, the eight bay controls, the
+absence of a canvas and the presence of the description.
+
+**How it was found is the part worth keeping.** Not by an audit — Lighthouse
+scores 100 and axe reports zero violations, and both would have gone on doing
+so, because both score a page that renders and neither asks what happens when
+a GPU is unavailable. It surfaced while making an unrelated check
+deterministic: the deployed check's hydration step was timing out at random,
+and the cause was a headless browser software-rasterising the scene on the main
+thread. Disabling WebGL to remove that variable is what exposed it.
+
+A flaky test was telling the truth about something other than what it was
+testing.
+
+## 2026-11-17 — The deployed check, and the failure that justifies it
+
+Everything this repository measures locally can be true while the deployed site
+is broken. That is not hypothetical here: **the site was live and answering for
+two days with `database: false`** — the Vercel project had no connection
+string, the build succeeded, the landing route rendered, the API answered, and
+nothing in CI knew.
+
+`scripts/check-deployed.mts` runs against the real URL and asserts:
+
+1. the document is server-rendered — the heading is in the HTML, no JavaScript
+   involved;
+2. the page hydrates — a control that only works once React has taken over is
+   used and the result observed;
+3. the API answers;
+4. **the API can reach Postgres**, as a separate assertion, because the failure
+   above is exactly the case where 3 passes and 4 does not;
+5. a configuration prices to a figure computed from the catalogue;
+6. a save round-trips;
+7. a share link's preview describes the build.
+
+It runs in CI on every push to main, and not on pull requests, because a pull
+request has not been deployed.
+
+Broken once before being trusted, as the standing practice requires: pointed at
+a URL that is not this application, it reported 0 of 6 and exited 1.
+
+Its hydration step runs with WebGL disabled on purpose. The check asks whether
+the page hydrates and prices; a headless browser has no GPU, and letting it
+software-rasterise the scene made the step time out at random. Switching WebGL
+off makes the question being asked the one being answered — and, as above, is
+what found a real defect.
+
+## 2026-11-17 — Lighthouse and axe, and what a score does not cover
+
+Lighthouse 13, mobile profile, median of five runs against the deployed URL:
+**performance 100, accessibility 100, best practices 100, SEO 100**, with the
+worst performance run at 99. The median of five is reported rather than a
+single run because one Lighthouse run says as much about the network that
+minute as about the page, and the spread is printed beside the median so nobody
+has to take it on trust.
+
+axe-core, WCAG 2.2 A and AA, **zero violations** in three states: the landing
+route before the configurator is asked for, the same route with it mounted, and
+a share link. Three states because they are three different documents, and
+scanning only the first would be scanning the one with almost nothing in it.
+
+Both scripts run through Node's own type stripping rather than tsx. tsx's
+esbuild step preserves function names by injecting a `__name` helper, and both
+tools serialise functions into the page, where that helper does not exist. The
+symptom is `__name is not defined` thrown from inside the browser, which says
+nothing about the cause — the same trap as an earlier script in this project.
+
+**What neither tool measured** is in the entry above: a browser with no WebGL
+lost the entire interface, and both would have kept reporting perfect scores.

@@ -5,9 +5,7 @@ on a grid, change its dimensions and finish, watch the price update, and share
 the result as a link that restores the exact build. Three.js front end, GraphQL
 API, **pricing and validation on the server**.
 
-**Live:** https://dowel-configurator.vercel.app — browsing, configuring and
-pricing all work. Saving and sharing do not yet; see
-[Status](#status) for why.
+**Live:** https://dowel-configurator.vercel.app
 
 Dowel is a fictional company. This is a demonstration project and nothing here
 is for sale.
@@ -18,37 +16,60 @@ is for sale.
 
 ## Status
 
-**Phases 1 to 4 of five are done. Phase 5 is outstanding.** What that means
-concretely:
+**Phases 1 to 5 of five are done.** The site is deployed, measured and checked
+against its live URL on every push to main. What is still open is listed at the
+bottom of this section rather than left unsaid.
 
-**Done.** The domain and its rules, the GraphQL API with generated types, the
-scene, and the configurator: controls, live pricing from the server, validation
-shown beside the bay that caused it, and save-and-share. CI runs type checking,
-linting, generated-type freshness, 163 unit and integration tests, a build, a
-first-load JS budget, and 20 browser tests against a real Postgres.
+### Measured on the deployed site
 
-**Not done — Phase 5.** A bundle analysis pass. Verifying disposal by mounting
-and unmounting the canvas twenty times and watching memory return. An axe
-accessibility audit. Lighthouse scores: **never measured, so no claim is made
-about them anywhere in this file.** A check that runs against the deployed URL
-in CI. And this README's final form.
+| | | Instrument |
+| --- | --- | --- |
+| Lighthouse performance, mobile | **100** (worst run 99) | `npm run measure:lighthouse` — Lighthouse 13, mobile profile, median of 5 runs against the live URL |
+| Lighthouse accessibility | **100** | as above |
+| Lighthouse best practices | **100** | as above |
+| Lighthouse SEO | **100** | as above |
+| axe violations, three states | **0** | `npm run check:a11y` — axe-core, WCAG 2.2 A and AA, against the live URL |
+| Deployed check | **8 of 8** | `npm run check:deployed`, in CI on every push to main |
 
-**The deployment is incomplete.** The site is live and the API answers, but the
-Vercel project has no database credentials, so `saveConfiguration` and share
-links fail. Its own health check says so:
+The three axe states are the landing route before the configurator is asked
+for, the same route with it mounted, and a share link — three different
+documents, so scanning only the first would be scanning the one with almost
+nothing in it.
 
-```
-{"data":{"health":{"ok":true,"database":false,"schemaVersion":"3"}}}
-```
+The deployed check asserts, against the real URL: the document is
+server-rendered, the page hydrates, the API answers, **the API can reach
+Postgres as a separate assertion**, a configuration prices to a known total, a
+save round-trips, and a share link previews the build rather than the site.
 
-`ok: true, database: false` — the function answered; it cannot reach Postgres.
-Adding `DATABASE_URL` and `DIRECT_URL` to the Vercel project fixes it; nothing
-in the code needs to change.
+That separate database assertion exists because of a real failure: this site
+was live and answering for two days with `database: false`, the Vercel project
+having no connection string, and nothing in CI knew. Local verification is not
+verification.
 
-**Performance figures come from one machine, an Apple M1.** No real device has
-been measured. See [What the numbers do not say](#what-the-numbers-do-not-say).
+### Still outstanding
 
----
+Nothing here blocks the site working. They are the items that would be next.
+
+- **Bundle analysis.** The first-load figure is measured in a browser and
+  enforced in CI, but nobody has sat down with a treemap of the lazy chunk to
+  see what the 408 KB of JavaScript behind the boundary actually consists of.
+- **Disposal verification.** Geometries, materials and instanced meshes are
+  disposed on unmount, and the measurement hook can mount and unmount the
+  canvas on demand — but the twenty-cycle memory check the brief asks for has
+  not been run, so the claim is "disposal is implemented", not "disposal is
+  proven".
+- **Ambient occlusion is approximate.** It is computed from position — depth
+  into the unit, height above the floor — rather than from the depth buffer.
+  It costs nothing measurable and buys most of the effect. A real screen-space
+  pass would be better and has not been attempted.
+- **One unresolved failure.** drei's `ContactShadows` renders nothing in this
+  scene, and so did the same technique written by hand. The floor plane drew,
+  the render target worked, and an orthographic capture from under the floor
+  came back empty under two camera formulations. The frustum-culling
+  hypothesis was tested and rejected. The cause is unknown and recorded as
+  unknown in `DECISIONS.md`; what ships is Three's shadow mapping, which works.
+- **No real device has been measured.** Every frame-time figure comes from one
+  Apple M1. See [What the numbers do not say](#what-the-numbers-do-not-say).
 
 ## What is server-authoritative, and why
 
@@ -232,7 +253,25 @@ went into the interface rather than the tests:
   elements, which includes switch access, eye tracking, screen-reader
   click-by-name, and a finger landing a few pixels off.
 
-An axe audit has not been run yet. That is Phase 5.
+axe reports **zero violations** across all three states of the deployed site,
+and Lighthouse scores accessibility **100**. Neither is a substitute for the
+other: Lighthouse runs a subset of axe's rules, and both only catch what can be
+checked mechanically. The part neither measures — that the whole interface is
+genuinely operable without the canvas — is what the browser tests assert.
+
+### One thing both audits would have missed
+
+A browser with no WebGL used to lose the **entire** configurator: no bays, no
+controls, no price, because an uncaught error in the canvas took the island
+down with it. Lighthouse and axe both score a page that renders; they do not
+ask what happens when a GPU is unavailable.
+
+It was found by disabling WebGL to make an unrelated check deterministic. The
+canvas is now wrapped in an error boundary that falls back to describing the
+unit in words, and there is a browser test that runs with WebGL switched off.
+WebGL is unavailable more often than a developer's machine suggests: old
+hardware, a driver on the browser's blocklist, enterprise policy, privacy
+extensions, a GPU process that has crashed once too often.
 
 ---
 
@@ -263,6 +302,9 @@ carry them. The GraphQL endpoint is at `/api/graphql`.
 | `npm run measure:bundle` | First-load JS, measured in a browser. Fails over 150 KB |
 | `npm run measure:scene` | Draw calls, frame rate and the screenshots, on a real GPU. Prints the renderer, the animation-frame ceiling and the measured CPU throttling rate beside every figure |
 | `npm run measure:scene-payload` | What the 3D view downloads once it is asked for |
+| `npm run measure:lighthouse` | Lighthouse against the deployed URL, mobile profile, median of five runs with the spread printed beside it |
+| `npm run check:a11y` | axe-core against the deployed URL in all three of its states |
+| `npm run check:deployed` | The deployed check. Also runs in CI on every push to main |
 
 ---
 
