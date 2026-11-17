@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { chromium, expect, test, type Page } from "@playwright/test";
 
 /**
  * The configurator, driven entirely through the non-canvas controls.
@@ -226,5 +226,38 @@ test("an unknown share link previews the site rather than failing", async ({
   for (const id of ["ZZZZZZZZ", "not-an-id"]) {
     const document = await (await request.get(`/u/${id}`)).text();
     expect(document).toContain("<title>Dowel — a shared build</title>");
+  }
+});
+
+test("the configurator survives a browser with no WebGL", async () => {
+  // Not a hypothetical: WebGL is unavailable on old hardware, under a driver
+  // on the browser's blocklist, under enterprise policy, behind some privacy
+  // extensions, and after the GPU process has crashed once too often.
+  //
+  // Before the canvas was wrapped in an error boundary this produced zero bay
+  // controls and no price — the whole configurator went down with the canvas,
+  // which is the opposite of what this project claims.
+  const browser = await chromium.launch({
+    args: ["--disable-webgl", "--disable-webgl2"],
+  });
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${test.info().project.use.baseURL ?? ""}/`);
+    await page.getByRole("button", { name: "Build a unit" }).click();
+
+    await expect(page.getByText("Total price: £493.10")).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByLabel(/^Bay in column/)).toHaveCount(8);
+    await expect(page.locator("canvas")).toHaveCount(0);
+    await expect(
+      page.getByText("cannot run in this browser", { exact: false }),
+    ).toBeVisible();
+    // The unit is still described, in the place the canvas would have been.
+    await expect(
+      page.getByText("3-column, 3-row unit in oak", { exact: false }).first(),
+    ).toBeVisible();
+  } finally {
+    await browser.close();
   }
 });

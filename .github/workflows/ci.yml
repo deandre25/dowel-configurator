@@ -87,3 +87,38 @@ jobs:
           path: playwright-report
           if-no-files-found: ignore
           retention-days: 7
+
+  # The deployed site, checked against the real URL.
+  #
+  # Local verification is not verification. Everything this repository measures
+  # locally can be true while the deployed site is broken, and that is not
+  # hypothetical here: the site was live and answering for two days with
+  # `database: false`, because the Vercel project had no connection string, and
+  # nothing in CI knew.
+  #
+  # It runs after the rest has passed, and only on main, because a pull request
+  # has not been deployed yet.
+  deployed:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    env:
+      DEPLOYED_URL: ${{ vars.DEPLOYED_URL || 'https://dowel-configurator.vercel.app' }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Check the deployed site
+        run: npm run check:deployed

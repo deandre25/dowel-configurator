@@ -25,6 +25,7 @@ import {
 import type { Configuration } from "@/lib/domain/grid";
 import type { RenderStats } from "@/components/scene/Unit";
 import type { CameraPreset } from "@/components/scene/Stage";
+import { CanvasBoundary } from "@/components/scene/CanvasBoundary";
 import {
   clearMeasurement,
   installMeasurement,
@@ -189,15 +190,17 @@ export function SceneView({
         drawn, and a screen reader is given it rather than the canvas.
       */}
       <div role="img" aria-label={description} className="absolute inset-0">
-        {near ? (
-          <Stage
-            key={generation}
-            configuration={shown}
-            instant={reducedMotion}
-            {...(preset === undefined ? {} : { preset })}
-            {...(measuring ? { onFrame, onGpuSamples } : {})}
-          />
-        ) : null}
+        <CanvasBoundary description={description}>
+          {near ? (
+            <Stage
+              key={generation}
+              configuration={shown}
+              instant={reducedMotion}
+              {...(preset === undefined ? {} : { preset })}
+              {...(measuring ? { onFrame, onGpuSamples } : {})}
+            />
+          ) : null}
+        </CanvasBoundary>
       </div>
 
       {near ? null : (
