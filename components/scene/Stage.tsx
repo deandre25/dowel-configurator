@@ -15,6 +15,7 @@ import { Canvas } from "@react-three/fiber";
 import { ACESFilmicToneMapping, SRGBColorSpace } from "three";
 import type { Configuration } from "@/lib/domain/grid";
 import { unitSize } from "@/lib/scene/dimensions";
+import { ContextLossWatcher } from "@/components/scene/ContextLossWatcher";
 import { Floor } from "@/components/scene/Floor";
 import { Unit, type RenderStats } from "@/components/scene/Unit";
 
@@ -40,6 +41,8 @@ type StageProps = {
     samples: readonly number[],
     available: boolean,
   ) => void;
+  /** Called when the browser drops the WebGL context out from under us. */
+  readonly onContextLost?: () => void;
 };
 
 const FIELD_OF_VIEW = 32;
@@ -87,6 +90,7 @@ export function Stage({
   instant,
   onFrame,
   onGpuSamples,
+  onContextLost,
 }: StageProps): React.ReactElement {
   const camera = cameraFor(configuration, preset);
   const size = unitSize(configuration.width, configuration.height);
@@ -127,6 +131,10 @@ export function Stage({
         background={false}
         environmentIntensity={1}
       />
+
+      {onContextLost === undefined ? null : (
+        <ContextLossWatcher onLost={onContextLost} />
+      )}
 
       <Unit
         configuration={configuration}

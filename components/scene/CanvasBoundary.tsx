@@ -16,8 +16,12 @@
  * current session.
  *
  * It has to be a class component. Error boundaries have no hook equivalent.
+ *
+ * It catches a context that never existed. A context **lost** later throws
+ * nothing, so this never runs for it — see `ContextLossWatcher`.
  */
 import { Component, type ReactNode } from "react";
+import { CanvasFallback } from "@/components/scene/CanvasFallback";
 
 type BoundaryProps = {
   readonly children: ReactNode;
@@ -40,14 +44,7 @@ export class CanvasBoundary extends Component<BoundaryProps, BoundaryState> {
     }
 
     return (
-      <div className="flex h-full flex-col justify-end gap-2 p-4">
-        <p className="text-sm text-ink-muted">
-          The three-dimensional view cannot run in this browser. Everything
-          else works: the unit below is described in words, and the controls
-          build and price it exactly the same.
-        </p>
-        <p className="text-sm">{this.props.description}</p>
-      </div>
+      <CanvasFallback description={this.props.description} reason="unavailable" />
     );
   }
 }

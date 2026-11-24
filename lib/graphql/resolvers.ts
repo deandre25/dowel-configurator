@@ -27,6 +27,7 @@ import {
   toInvalidConfiguration,
   toPrice,
 } from "@/lib/graphql/present";
+import { buildCommit } from "@/lib/graphql/build";
 import { SCHEMA_VERSION } from "@/lib/graphql/version";
 
 /** How many times a save retries when a random share id is already taken. */
@@ -71,6 +72,7 @@ export const resolvers: Resolvers = {
       ok: true,
       database: await context.pingDatabase(),
       schemaVersion: SCHEMA_VERSION,
+      commit: buildCommit(),
     }),
   },
 

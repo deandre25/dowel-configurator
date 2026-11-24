@@ -1,7 +1,8 @@
 /**
  * The deployed check: does the live site actually work?
  *
- *   node --experimental-strip-types scripts/check-deployed.mts [--url <origin>]
+ *   node --experimental-strip-types scripts/check-deployed.mts \
+ *     [--url <origin>] [--expect-commit <sha>] [--wait-seconds 300]
  *
  * Local verification is not verification. Everything this project measures
  * locally can be true while the deployed site is broken — a missing
@@ -20,6 +21,16 @@
  * 4. A configuration prices, to a known total.
  * 5. A configuration saves and restores to the same build.
  * 6. A share link's preview describes the build rather than the site.
+ *
+ * **Which deployment is it checking?** Before anything else, it waits for the
+ * live site to report the commit it was asked about. Vercel builds
+ * asynchronously, so a job triggered by a push reaches this script while the
+ * previous deployment is still being served — and would pass, stably and
+ * repeatedly, against the wrong artifact. That is the CI-that-never-ran
+ * failure moved one layer out: every light green, nothing being verified.
+ *
+ * Without `--expect-commit` it checks whatever is live and says which commit
+ * that was, which is what a local run wants.
  */
 import { chromium } from "playwright";
 
@@ -69,14 +80,95 @@ const KNOWN_INPUT = {
 };
 const KNOWN_TOTAL_CENTS = 49_310;
 
+async function liveCommit(origin: string): Promise<string | null> {
+  try {
+    const data = (await graphql(origin, "{ health { commit } }")) as {
+      health: { commit: string };
+    };
+    return data.health.commit;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Waits until the deployment serving `origin` reports `expected`.
+ *
+ * Returns false on timeout rather than throwing, so the caller can record it
+ * as a failed check alongside the others instead of a stack trace.
+ */
+async function waitForDeployment(
+  origin: string,
+  expected: string,
+  seconds: number,
+): Promise<{ matched: boolean; seen: string | null; waited: number }> {
+  const deadline = Date.now() + seconds * 1000;
+  const started = Date.now();
+  let seen: string | null = null;
+
+  for (;;) {
+    seen = await liveCommit(origin);
+    if (seen === expected) {
+      return {
+        matched: true,
+        seen,
+        waited: Math.round((Date.now() - started) / 1000),
+      };
+    }
+    if (Date.now() > deadline) {
+      return {
+        matched: false,
+        seen,
+        waited: Math.round((Date.now() - started) / 1000),
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+}
+
 async function main(): Promise<void> {
   const origin = (
     argValue("--url") ??
     process.env["DEPLOYED_URL"] ??
     "https://dowel-configurator.vercel.app"
   ).replace(/\/$/, "");
+  const expected =
+    argValue("--expect-commit") ?? process.env["EXPECTED_COMMIT"] ?? null;
+  const waitSeconds = Number(argValue("--wait-seconds") ?? "300");
 
   process.stdout.write(`Checking the deployed site\n  ${origin}\n\n`);
+
+  if (expected === null || expected === "") {
+    const live = await liveCommit(origin);
+    process.stdout.write(
+      `  no commit expected; checking whatever is live (${live ?? "unknown"})\n\n`,
+    );
+  } else {
+    process.stdout.write(
+      `  waiting for the deployment of ${expected.slice(0, 8)} ` +
+        `(up to ${String(waitSeconds)}s)\n`,
+    );
+    const result = await waitForDeployment(origin, expected, waitSeconds);
+    record(
+      "the deployment under test is the commit that triggered it",
+      result.matched,
+      result.matched
+        ? `${expected.slice(0, 8)} live after ${String(result.waited)}s`
+        : `timed out after ${String(result.waited)}s; the site is serving ` +
+          `${result.seen ?? "nothing readable"}, expected ${expected.slice(0, 8)}`,
+    );
+    if (!result.matched) {
+      // Checking a stale artifact is worse than not checking: it is a green
+      // light for code that was never deployed.
+      process.stdout.write(
+        `\n  FAIL  the deployed site is not the commit under test — ` +
+          `nothing further was checked\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write("\n");
+  }
 
   // 1. Server-rendered, before any JavaScript runs.
   try {

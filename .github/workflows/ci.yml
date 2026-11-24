@@ -105,6 +105,11 @@ jobs:
 
     env:
       DEPLOYED_URL: ${{ vars.DEPLOYED_URL || 'https://dowel-configurator.vercel.app' }}
+      # The commit this run is for. The check waits for the live site to report
+      # it before asserting anything: Vercel builds asynchronously, so without
+      # this the job races the deployment and passes against the previous one
+      # — green, stable, and measuring the wrong artifact.
+      EXPECTED_COMMIT: ${{ github.sha }}
 
     steps:
       - uses: actions/checkout@v5

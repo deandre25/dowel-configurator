@@ -583,6 +583,7 @@ describe("Query.health", () => {
             ok
             database
             schemaVersion
+            commit
           }
         }
       `),
@@ -590,7 +591,10 @@ describe("Query.health", () => {
     expect(data["health"]).toEqual({
       ok: true,
       database: false,
-      schemaVersion: "3",
+      schemaVersion: "4",
+      // No git metadata in a test process, which is not an error — the
+      // deployed check treats "unknown" as a failure to match.
+      commit: "unknown",
     });
   });
 });

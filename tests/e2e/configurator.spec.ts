@@ -261,3 +261,41 @@ test("the configurator survives a browser with no WebGL", async () => {
     await browser.close();
   }
 });
+
+test("the configurator survives losing the WebGL context mid-session", async ({
+  page,
+}) => {
+  // Losing a context is not the same failure as never having one, and it is
+  // the more likely of the two on the hardware where either happens: the GPU
+  // process crashes, the driver resets, the tab is backgrounded too long, or
+  // the browser reclaims the context under memory pressure.
+  //
+  // Nothing is thrown, so no error boundary runs. Measured before this was
+  // handled: the canvas stayed in the document showing its last frame while
+  // the configuration went on changing underneath it — a picture that had
+  // quietly stopped matching the unit.
+  await openConfigurator(page);
+  await page.locator("canvas").waitFor({ timeout: 90_000 });
+
+  await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    const gl =
+      canvas?.getContext("webgl2") ?? canvas?.getContext("webgl") ?? null;
+    gl?.getExtension("WEBGL_lose_context")?.loseContext();
+  });
+
+  // The canvas goes, and says why.
+  await expect(page.locator("canvas")).toHaveCount(0, { timeout: 20_000 });
+  await expect(
+    page.getByText("browser dropped its connection", { exact: false }),
+  ).toBeVisible();
+  // And the unit is still described where the picture used to be.
+  await expect(
+    page.getByText("3-column, 3-row unit in oak", { exact: false }).first(),
+  ).toBeVisible();
+
+  // Everything else keeps working, including pricing on the server.
+  await expect(page.getByLabel(/^Bay in column/)).toHaveCount(8);
+  await bay(page, 1, "bottom row").selectOption("EMPTY");
+  await expect(total(page, "£445.15")).toBeVisible();
+});

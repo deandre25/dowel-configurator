@@ -26,6 +26,7 @@ import type { Configuration } from "@/lib/domain/grid";
 import type { RenderStats } from "@/components/scene/Unit";
 import type { CameraPreset } from "@/components/scene/Stage";
 import { CanvasBoundary } from "@/components/scene/CanvasBoundary";
+import { CanvasFallback } from "@/components/scene/CanvasFallback";
 import {
   clearMeasurement,
   installMeasurement,
@@ -139,6 +140,16 @@ export function SceneView({
   const [generation, setGeneration] = useState(0);
   const api = useRef<MeasurementApi | null>(null);
 
+  /**
+   * Set when the browser drops the WebGL context. It is not an error anything
+   * throws, so no boundary catches it; without this the canvas stays in the
+   * document showing a frame of a unit that no longer exists.
+   */
+  const [contextLost, setContextLost] = useState(false);
+  const onContextLost = useCallback(() => {
+    setContextLost(true);
+  }, []);
+
   useEffect(() => {
     if (!measuring) {
       return;
@@ -190,17 +201,22 @@ export function SceneView({
         drawn, and a screen reader is given it rather than the canvas.
       */}
       <div role="img" aria-label={description} className="absolute inset-0">
-        <CanvasBoundary description={description}>
-          {near ? (
-            <Stage
-              key={generation}
-              configuration={shown}
-              instant={reducedMotion}
-              {...(preset === undefined ? {} : { preset })}
-              {...(measuring ? { onFrame, onGpuSamples } : {})}
-            />
-          ) : null}
-        </CanvasBoundary>
+        {contextLost ? (
+          <CanvasFallback description={description} reason="lost" />
+        ) : (
+          <CanvasBoundary description={description}>
+            {near ? (
+              <Stage
+                key={generation}
+                configuration={shown}
+                instant={reducedMotion}
+                onContextLost={onContextLost}
+                {...(preset === undefined ? {} : { preset })}
+                {...(measuring ? { onFrame, onGpuSamples } : {})}
+              />
+            ) : null}
+          </CanvasBoundary>
+        )}
       </div>
 
       {near ? null : (

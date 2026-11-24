@@ -209,5 +209,12 @@ export const typeDefs = /* GraphQL */ `
     database: Boolean!
     "The schema version this deployment serves."
     schemaVersion: String!
+    """
+    The commit this deployment was built from, or "unknown" where the build
+    had no git metadata. The check that runs against the deployed URL waits
+    for this to match the commit that triggered it, so a check cannot pass
+    against the previous deployment while the new one is still building.
+    """
+    commit: String!
   }
 `;
