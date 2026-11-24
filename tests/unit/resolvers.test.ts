@@ -575,6 +575,10 @@ describe("a stored row this build cannot trust", () => {
 
 describe("Query.health", () => {
   it("reports the database separately from the route handler", async () => {
+    const expectedCommit =
+      process.env["VERCEL_GIT_COMMIT_SHA"] ??
+      process.env["GITHUB_SHA"] ??
+      "unknown";
     pings = false;
     const data = dataOf(
       await run(/* GraphQL */ `
@@ -592,9 +596,10 @@ describe("Query.health", () => {
       ok: true,
       database: false,
       schemaVersion: "4",
-      // No git metadata in a test process, which is not an error — the
-      // deployed check treats "unknown" as a failure to match.
-      commit: "unknown",
+      // Whatever the environment supplies: this asserts the field is wired
+      // through, not what the machine happens to be. `buildCommit` has its
+      // own tests, which set the environment rather than read it.
+      commit: expectedCommit,
     });
   });
 });

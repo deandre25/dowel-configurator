@@ -1087,3 +1087,97 @@ nothing about the cause — the same trap as an earlier script in this project.
 
 **What neither tool measured** is in the entry above: a browser with no WebGL
 lost the entire interface, and both would have kept reporting perfect scores.
+
+## 2026-11-24 — Losing a context is not the same as never having one
+
+The error boundary added earlier catches a WebGL context that fails at mount,
+because that throws during render. A context **lost** later throws nothing: the
+GPU process crashes, the driver resets, the tab is backgrounded too long, or
+the browser reclaims the context under memory pressure, and a
+`webglcontextlost` event fires on the canvas asynchronously, outside React's
+render cycle. No boundary runs.
+
+On the hardware where either happens — old machines, blocklisted drivers,
+flaky GPU processes — losing one mid-session is the likelier of the two.
+
+**What it did before the fix**, measured on the deployed site by losing the
+context through `WEBGL_lose_context`:
+
+| | |
+| --- | --- |
+| Canvas in the document | yes, still there |
+| Fallback shown | no |
+| Canvas pixels after the loss | unchanged |
+| Canvas pixels after the configuration changed | **unchanged** |
+| Controls and price | still working — £493.10 → £445.15 |
+| Errors in the console | none |
+
+So the interface kept working while the picture froze on a unit that no longer
+existed, and nothing said so. A blank canvas is obvious. A stale one is a lie,
+and this one was being told next to a correct price and a correct
+`aria-label`: a screen reader was given the right description while a sighted
+visitor was shown the wrong unit.
+
+`ContextLossWatcher` listens on `gl.domElement` from inside the canvas tree,
+because the event does not bubble. On loss the canvas is unmounted and the
+written description takes its place, with a line saying what happened.
+
+`preventDefault` is deliberately not called: calling it asks the browser to
+restore the context later, and a machine that dropped one is likely to drop
+the next. A view that flickers between working and broken is worse than one
+that stops and says so.
+
+## 2026-11-24 — The deployed check was checking an unknown artifact
+
+The job runs on push to main. Vercel builds asynchronously — measured at ~45
+seconds for this project. The check started immediately and asserted against
+whatever was live, which for the first three quarters of a minute is the
+*previous* deployment.
+
+It would have passed. Stably, repeatably, nine checks green, against code
+nobody had just committed. That is the CI-that-never-ran failure moved one
+layer out: every light green and nothing being verified.
+
+`Query.health` now reports `commit`, from `VERCEL_GIT_COMMIT_SHA` or
+`GITHUB_SHA`, and the check waits for the live site to report the commit it was
+asked about before asserting anything. On timeout it fails and checks nothing
+further, because a green light for an artifact that is not under test is worse
+than no light.
+
+Verified in both directions, as the standing practice requires:
+
+- against the commit actually deployed: `203c5b77 live after 2s`, 9 of 9;
+- against a commit that is not deployed: timed out, reported what the site was
+  serving instead, exited 1.
+
+**A correction to something stated earlier.** I read `.vercel/project.json`,
+saw only `orgId` and `projectId`, and said the project had no GitHub
+connection and that pushes did not deploy. That was wrong: the connection
+lives on Vercel's side, not in that file, and `vercel project inspect` shows
+`deandre25/dowel-configurator (GitHub)`. Pushes do deploy. The race was real
+and the conclusion drawn from the wrong evidence was not.
+
+## 2026-11-24 — What axe and Lighthouse did not cover
+
+Zero axe violations across three states, accessibility 100 in Lighthouse, and
+**not one of the 18 browser tests pressed a key.** They all clicked.
+
+Both tools are static checks for names, contrast and structure. Neither
+operates a control, so neither can tell you whether a custom widget is usable
+by keyboard — and with the written fallback now a primary path rather than a
+courtesy, that is the part that matters.
+
+There is now a test that builds a whole configuration with Tab, arrow keys,
+Enter and typing, in a browser with no WebGL: open the configurator, widen the
+unit, put a drawer in the new column, read the price. No click, no `check`, no
+`selectOption`.
+
+Two things it established that could not have been assumed:
+
+- **The tab order is already correct** — bays in reading order, then columns,
+  rows, finish, save — and the upper half of a door is correctly not
+  focusable, because it is not a control.
+- **`ArrowDown` on a focused `<select>` does not change its value on macOS**;
+  it opens the popup. Driving a native select from the keyboard portably means
+  typing, and the test types `dr` for Drawer. Worth knowing before writing a
+  keyboard test that passes on one platform.

@@ -299,3 +299,102 @@ test("the configurator survives losing the WebGL context mid-session", async ({
   await bay(page, 1, "bottom row").selectOption("EMPTY");
   await expect(total(page, "£445.15")).toBeVisible();
 });
+
+/**
+ * What has the keyboard focus, described the way a person navigating by
+ * keyboard would recognise it.
+ */
+type Focused = { tag: string; group: string; label: string };
+
+async function focused(page: Page): Promise<Focused> {
+  return page.evaluate(() => {
+    const element = document.activeElement;
+    if (element === null) {
+      return { tag: "none", group: "", label: "" };
+    }
+    const input = element as HTMLInputElement;
+    return {
+      tag: element.tagName.toLowerCase(),
+      group: input.name ?? "",
+      label:
+        element.getAttribute("aria-label") ??
+        input.labels?.[0]?.textContent?.trim() ??
+        element.textContent?.trim() ??
+        "",
+    };
+  });
+}
+
+/** Tabs until something matches, and reports how many presses it took. */
+async function tabTo(
+  page: Page,
+  matches: (focus: Focused) => boolean,
+  limit = 40,
+): Promise<number> {
+  for (let presses = 1; presses <= limit; presses += 1) {
+    await page.keyboard.press("Tab");
+    if (matches(await focused(page))) {
+      return presses;
+    }
+  }
+  throw new Error(`nothing matched within ${String(limit)} tab presses`);
+}
+
+test("a whole configuration can be built with the keyboard alone, without the canvas", async () => {
+  // axe reports zero violations, and Lighthouse scores accessibility 100.
+  // Neither answers this question: both are static checks for names,
+  // contrast and structure, and neither operates a control. With the written
+  // fallback now a primary path rather than a courtesy, whether the thing can
+  // actually be driven by keyboard is the part that matters.
+  //
+  // Not one click, check or selectOption below — only Tab, arrows, Enter and
+  // typing, in a browser with no WebGL at all.
+  const browser = await chromium.launch({
+    args: ["--disable-webgl", "--disable-webgl2"],
+  });
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${test.info().project.use.baseURL ?? ""}/`);
+
+    // Open the configurator.
+    await page.keyboard.press("Tab");
+    expect((await focused(page)).label).toBe("Build a unit");
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Total price: £493.10")).toBeVisible({
+      timeout: 60_000,
+    });
+
+    // Widen the unit: into the columns group, then one step right.
+    // 17950 frame + 12 bays x 2175 + 1395 + 4795 + 5595 = 55835.
+    await tabTo(page, (focus) => focus.group === "columns");
+    await page.keyboard.press("ArrowRight");
+    await expect(
+      page.getByRole("columnheader", { name: "Column 4" }),
+    ).toBeVisible();
+    await expect(page.getByText("Total price: £558.35")).toBeVisible();
+
+    // Put a drawer in the new column's bottom bay. A native select is driven
+    // by typing: "dr" picks Drawer, and does so on every platform, where
+    // ArrowDown opens a popup on macOS instead of changing the value.
+    await page.keyboard.press("Tab"); // out of the radio group
+    // `startsWith`, because a bay's label element wraps both the name and the
+    // select, so its text carries the option list along with it.
+    await tabTo(page, (focus) =>
+      focus.label.startsWith("Bay in column 4, bottom row"),
+    );
+    await page.keyboard.type("dr");
+    await expect(
+      page.getByLabel("Bay in column 4, bottom row"),
+    ).toHaveValue("DRAWER");
+
+    // 55835 + 4795 = 60630, priced by the server like every other figure.
+    await expect(page.getByText("Total price: £606.30")).toBeVisible();
+
+    // And the unit is still described, where the canvas would have been.
+    await expect(
+      page.getByText("4-column, 3-row unit in oak", { exact: false }).first(),
+    ).toBeVisible();
+  } finally {
+    await browser.close();
+  }
+});
