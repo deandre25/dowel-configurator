@@ -311,22 +311,57 @@ async function main(): Promise<void> {
   // render and made this step time out at random. With no WebGL the canvas
   // falls back to its written description, the rest of the interface is
   // untouched, and the question being asked is the one being answered.
+  //
+  // It is retried, because this runs seconds after a deployment goes live.
+  // The page is served immediately while its freshly-named chunks are still
+  // propagating, so the dynamic import that mounts the configurator can fetch
+  // a chunk that the edge does not have yet. Locally, against a settled
+  // deployment, this step takes about 1.6 seconds; in CI it timed out at 60.
+  // A retry costs nothing when the first attempt works and distinguishes
+  // "propagating" from "broken", which a longer timeout would not.
+  const ATTEMPTS = 3;
   const browser = await chromium.launch({
     args: ["--disable-webgl", "--disable-webgl2"],
   });
   try {
-    const page = await browser.newPage();
-    await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Build a unit" }).click();
-    await page.getByText("Total price:").waitFor({ timeout: 60_000 });
-    const priced = await page.getByText("Total price: £493.10").isVisible();
-    record(
-      "the page hydrates and prices from the server",
-      priced,
-      priced ? "the configurator mounted and showed a server price" : "no price appeared",
-    );
-  } catch (error) {
-    record("the page hydrates and prices from the server", false, String(error));
+    let hydrated = false;
+    let detail = "";
+
+    for (let attempt = 1; attempt <= ATTEMPTS && !hydrated; attempt += 1) {
+      const page = await browser.newPage();
+      const started = Date.now();
+      try {
+        await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
+        await page.getByRole("button", { name: "Build a unit" }).click();
+        await page.getByText("Total price:").waitFor({ timeout: 45_000 });
+        hydrated = await page
+          .getByText("Total price: £493.10")
+          .isVisible();
+        detail = hydrated
+          ? `the configurator mounted and showed a server price in ` +
+            `${String(Math.round((Date.now() - started) / 100) / 10)}s` +
+            (attempt > 1 ? ` on attempt ${String(attempt)}` : "")
+          : "the configurator mounted but the price was not the expected one";
+      } catch (error) {
+        // Keep what the page was actually showing. A bare timeout says only
+        // that something did not appear, which is the least useful half.
+        let showing = "could not be read";
+        try {
+          showing = (await page.locator("main").innerText())
+            .replace(/\s+/g, " ")
+            .slice(0, 160);
+        } catch {
+          // the page may be gone
+        }
+        detail =
+          `attempt ${String(attempt)} of ${String(ATTEMPTS)}: ${String(error).split("\n")[0] ?? ""} ` +
+          `| page was showing: ${showing}`;
+      } finally {
+        await page.close();
+      }
+    }
+
+    record("the page hydrates and prices from the server", hydrated, detail);
   } finally {
     await browser.close();
   }
