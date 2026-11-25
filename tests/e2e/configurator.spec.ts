@@ -262,42 +262,87 @@ test("the configurator survives a browser with no WebGL", async () => {
   }
 });
 
-test("the configurator survives losing the WebGL context mid-session", async ({
+test("a lost WebGL context falls back, and a restored one comes back", async ({
   page,
 }) => {
   // Losing a context is not the same failure as never having one, and it is
-  // the more likely of the two on the hardware where either happens: the GPU
-  // process crashes, the driver resets, the tab is backgrounded too long, or
-  // the browser reclaims the context under memory pressure.
+  // much the commoner: a mobile browser releases the context routinely when a
+  // tab goes to the background and gives it back on return. Nothing is thrown
+  // either way, so no error boundary runs.
   //
-  // Nothing is thrown, so no error boundary runs. Measured before this was
-  // handled: the canvas stayed in the document showing its last frame while
-  // the configuration went on changing underneath it — a picture that had
-  // quietly stopped matching the unit.
-  await openConfigurator(page);
+  // Measured before this was handled: the canvas stayed in the document
+  // showing its last frame while the configuration went on changing
+  // underneath it — a picture that had quietly stopped matching the unit.
+  await page.goto(`${test.info().project.use.baseURL ?? ""}/?measure=1`);
+  await page.getByRole("button", { name: "Build a unit" }).click();
+  await expect(total(page, "£493.10")).toBeVisible({ timeout: 60_000 });
   await page.locator("canvas").waitFor({ timeout: 90_000 });
+  await page.waitForFunction(
+    () => globalThis.__dowelMeasurement?.ready === true,
+    undefined,
+    { timeout: 90_000 },
+  );
+
+  const triangles = async (): Promise<number> =>
+    page.evaluate(() => globalThis.__dowelMeasurement?.stats?.triangles ?? 0);
+  const beforeLoss = await triangles();
+  expect(beforeLoss).toBeGreaterThan(0);
 
   await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
     const gl =
       canvas?.getContext("webgl2") ?? canvas?.getContext("webgl") ?? null;
-    gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    const extension = gl?.getExtension("WEBGL_lose_context") ?? null;
+    (globalThis as unknown as { __lose?: unknown }).__lose = extension;
+    extension?.loseContext();
   });
 
-  // The canvas goes, and says why.
-  await expect(page.locator("canvas")).toHaveCount(0, { timeout: 20_000 });
+  // The view says it is paused, and the unit is still described.
   await expect(
-    page.getByText("browser dropped its connection", { exact: false }),
+    page.getByText("browser released the graphics card", { exact: false }),
   ).toBeVisible();
-  // And the unit is still described where the picture used to be.
-  await expect(
-    page.getByText("3-column, 3-row unit in oak", { exact: false }).first(),
-  ).toBeVisible();
+  // The canvas stays in the document on purpose: it is the only element the
+  // browser will tell that the context is back.
+  await expect(page.locator("canvas")).toHaveCount(1);
 
-  // Everything else keeps working, including pricing on the server.
-  await expect(page.getByLabel(/^Bay in column/)).toHaveCount(8);
-  await bay(page, 1, "bottom row").selectOption("EMPTY");
-  await expect(total(page, "£445.15")).toBeVisible();
+  // Everything else keeps working while it is paused, including a change of
+  // size — so what the canvas eventually draws must be the unit as it is
+  // then, not the one that was on screen when the context went.
+  await page.getByRole("radio", { name: "5", exact: true }).first().check();
+  // Widening to five reserves the centre bay of the bottom row for a support,
+  // which is where the door was: 17950 + 15 bays x 2175 + 1395 + 4795.
+  await expect(total(page, "£567.65")).toBeVisible();
+
+  await page.evaluate(() => {
+    // Clear the counters first, so what is asserted below is a frame drawn
+    // after the restore rather than the last one drawn before the loss. No
+    // frames are produced while the context is gone, so the stale value sits
+    // there looking like a fresh one.
+    const api = globalThis.__dowelMeasurement;
+    if (api !== undefined) {
+      api.stats = null;
+    }
+    (
+      globalThis as unknown as {
+        __lose?: { restoreContext: () => void };
+      }
+    ).__lose?.restoreContext();
+  });
+
+  await expect(
+    page.getByText("browser released the graphics card", { exact: false }),
+  ).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator("canvas")).toHaveCount(1);
+
+  // Drawing again, and drawing the unit that exists now rather than the one
+  // that existed before the loss.
+  // Wait for a frame drawn after the restore. The counter is read before the
+  // frame it belongs to, so it reads zero for one frame after a remount.
+  await expect
+    .poll(async () => triangles(), { timeout: 30_000 })
+    .toBeGreaterThan(0);
+  expect(await triangles()).not.toBe(beforeLoss);
+  await expect(total(page, "£567.65")).toBeVisible();
 });
 
 /**

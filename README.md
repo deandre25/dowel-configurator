@@ -273,6 +273,12 @@ WebGL is unavailable more often than a developer's machine suggests: old
 hardware, a driver on the browser's blocklist, enterprise policy, privacy
 extensions, a GPU process that has crashed once too often.
 
+A context **lost** later is a separate case and the commoner one — a mobile
+browser releases it whenever a tab is backgrounded. That is handled too: the
+view says it is paused, everything else keeps working, and when the browser
+gives the context back the scene is rebuilt from the configuration as it
+stands then, which may not be the one that was on screen when it went.
+
 ---
 
 ## Running it

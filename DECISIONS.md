@@ -1181,3 +1181,48 @@ Two things it established that could not have been assumed:
   it opens the popup. Driving a native select from the keyboard portably means
   typing, and the test types `dr` for Drawer. Worth knowing before writing a
   keyboard test that passes on one platform.
+
+## 2026-11-25 — A lost context is usually a paused one, so it is given back
+
+The previous entry chose not to call `preventDefault` on `webglcontextlost`,
+reasoning that a machine which drops one context will drop the next. That is
+true of a crashing driver and wrong about the common case.
+
+**A mobile browser releases the WebGL context routinely when a tab goes to the
+background, and restores it on return.** That is far and away the most frequent
+way a context is lost — more common than a driver reset or a GPU process
+crash. Demoting permanently to the text fallback meant someone who changed
+apps for fifteen seconds came back to a view that only a page reload could fix.
+
+Two details decide the implementation, and both run against the earlier design:
+
+- **`preventDefault` is required, not optional.** The browser sends
+  `webglcontextrestored` only if the loss was cancelled. Declining to cancel it
+  is declining the restore.
+- **The canvas has to stay mounted.** The restore event is delivered to the
+  element that lost the context. Unmounting the canvas — which is what the
+  first version did — throws away the only thing that could hear the browser
+  give it back. It is now hidden rather than removed, with the fallback over
+  it.
+
+On restore the scene is remounted with a new key rather than resumed. A
+restored context is usable but empty: the geometries, materials and instance
+buffers that were on the old one are gone. Remounting rebuilds from the
+configuration **as it stands now**, which is not necessarily the one that was
+on screen when the context went — the controls, the pricing and the share
+button all kept working throughout.
+
+The test makes exactly that distinction: it loses the context, **changes the
+unit while it is lost**, restores, and asserts the scene that comes back is
+drawing the new unit. Widening to five columns reserves the centre bay of the
+bottom row for a support, which is where the door was, so the configuration
+genuinely differs — 382 triangles before, 226 after.
+
+Two things that test got wrong first, both worth keeping:
+
+- It polled the triangle counter for "not what it was before". No frames are
+  produced while a context is lost, so the stale pre-loss value sat there
+  looking fresh and the poll passed on it. The counters are now cleared before
+  the restore, so the assertion is about a frame drawn after it.
+- It read the counter immediately after the remount, when it is zero for one
+  frame — the renderer's statistics are read before the frame they belong to.

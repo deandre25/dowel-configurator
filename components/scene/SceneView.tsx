@@ -144,10 +144,26 @@ export function SceneView({
    * Set when the browser drops the WebGL context. It is not an error anything
    * throws, so no boundary catches it; without this the canvas stays in the
    * document showing a frame of a unit that no longer exists.
+   *
+   * The canvas is hidden rather than unmounted, because the restore event is
+   * delivered to the element that lost the context — unmounting it throws away
+   * the only thing that could hear the browser give it back.
    */
   const [contextLost, setContextLost] = useState(false);
   const onContextLost = useCallback(() => {
     setContextLost(true);
+  }, []);
+
+  /**
+   * A restored context is a usable context, but not a populated one: the GPU
+   * resources that were on the old one are gone. Remounting with a new key
+   * rebuilds the scene from the configuration as it stands **now**, which may
+   * not be the configuration that was on screen when the context was lost —
+   * the controls kept working the whole time.
+   */
+  const onContextRestored = useCallback(() => {
+    setContextLost(false);
+    setGeneration((value) => value + 1);
   }, []);
 
   useEffect(() => {
@@ -201,9 +217,11 @@ export function SceneView({
         drawn, and a screen reader is given it rather than the canvas.
       */}
       <div role="img" aria-label={description} className="absolute inset-0">
-        {contextLost ? (
-          <CanvasFallback description={description} reason="lost" />
-        ) : (
+        {/*
+          Hidden, not unmounted, while the context is lost: the canvas is the
+          only element the browser will tell that the context is back.
+        */}
+        <div className={contextLost ? "invisible" : "absolute inset-0"}>
           <CanvasBoundary description={description}>
             {near ? (
               <Stage
@@ -211,12 +229,19 @@ export function SceneView({
                 configuration={shown}
                 instant={reducedMotion}
                 onContextLost={onContextLost}
+                onContextRestored={onContextRestored}
                 {...(preset === undefined ? {} : { preset })}
                 {...(measuring ? { onFrame, onGpuSamples } : {})}
               />
             ) : null}
           </CanvasBoundary>
-        )}
+        </div>
+
+        {contextLost ? (
+          <div className="absolute inset-0">
+            <CanvasFallback description={description} reason="lost" />
+          </div>
+        ) : null}
       </div>
 
       {near ? null : (

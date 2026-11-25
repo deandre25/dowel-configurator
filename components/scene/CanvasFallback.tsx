@@ -33,7 +33,7 @@ export function CanvasFallback({
     <div className="flex h-full flex-col justify-end gap-2 p-4">
       <p className="text-sm text-ink-muted">
         {reason === "lost"
-          ? "The three-dimensional view stopped — the browser dropped its connection to the graphics card. Everything else works, and the unit is described below."
+          ? "The three-dimensional view is paused — the browser released the graphics card, which it often does while a tab is in the background. It comes back on its own. Everything else works, and the unit is described below."
           : "The three-dimensional view cannot run in this browser. Everything else works: the unit below is described in words, and the controls build and price it exactly the same."}
       </p>
       <p className="text-sm">{description}</p>

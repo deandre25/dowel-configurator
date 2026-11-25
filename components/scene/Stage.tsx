@@ -43,6 +43,8 @@ type StageProps = {
   ) => void;
   /** Called when the browser drops the WebGL context out from under us. */
   readonly onContextLost?: () => void;
+  /** Called when the browser gives it back. */
+  readonly onContextRestored?: () => void;
 };
 
 const FIELD_OF_VIEW = 32;
@@ -91,6 +93,7 @@ export function Stage({
   onFrame,
   onGpuSamples,
   onContextLost,
+  onContextRestored,
 }: StageProps): React.ReactElement {
   const camera = cameraFor(configuration, preset);
   const size = unitSize(configuration.width, configuration.height);
@@ -132,8 +135,11 @@ export function Stage({
         environmentIntensity={1}
       />
 
-      {onContextLost === undefined ? null : (
-        <ContextLossWatcher onLost={onContextLost} />
+      {onContextLost === undefined || onContextRestored === undefined ? null : (
+        <ContextLossWatcher
+          onLost={onContextLost}
+          onRestored={onContextRestored}
+        />
       )}
 
       <Unit
